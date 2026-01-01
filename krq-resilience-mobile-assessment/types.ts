@@ -32,6 +32,7 @@ export interface DetailedFeedback {
   actionPlan: string[];
   weeklyMission: string;
   recommendedBooks: string[];
+  recommendedMovies: string[];
   affirmation: string;
 }
 
