@@ -1,0 +1,5 @@
+{
+  "name": "KRQ-Resilience Mobile Assessment",
+  "description": "A brutalism-styled mobile web app for measuring employee resilience based on the KRQ-53 scale, featuring scoring, visualization, and PDF export.",
+  "requestFramePermissions": []
+}
