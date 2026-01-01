@@ -525,21 +525,28 @@ const App: React.FC = () => {
   };
 
   // Generate single participant PDF as blob using html2canvas for Korean support
+  // Updated: 2024-01-01 - Force rebuild for Vercel deployment
   const generateParticipantPDFBlob = async (participant: Participant): Promise<Blob> => {
     const result = participant.result;
     const personaRule = PERSONA_RULES.find(r => result.totalScore >= r.min);
 
+    // Parse date safely
+    const completedDate = participant.completedAt
+      ? new Date(participant.completedAt).toLocaleDateString('ko-KR')
+      : new Date().toLocaleDateString('ko-KR');
+
     // Create temporary container for rendering
     const tempContainer = document.createElement('div');
-    tempContainer.id = 'temp-pdf-container';
+    tempContainer.id = `temp-pdf-container-${Date.now()}`;
     tempContainer.style.cssText = `
-      position: fixed;
+      position: absolute;
       left: -9999px;
       top: 0;
       width: 800px;
       background: #FFDE03;
       padding: 30px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+      z-index: -1;
     `;
 
     // Build HTML content
@@ -553,7 +560,7 @@ const App: React.FC = () => {
           회복탄력성 심층 분석 리포트
         </h1>
         <p style="text-align: center; font-weight: bold; margin: 0 0 20px 0;">
-          ${participant.team || '-'} | ${participant.name}님 | ${new Date(participant.completedAt).toLocaleDateString()}
+          ${participant.team || '-'} | ${participant.name}님 | ${completedDate}
         </p>
 
         <!-- Persona & Total Score -->
@@ -756,12 +763,17 @@ const App: React.FC = () => {
     // Append to body for rendering
     document.body.appendChild(tempContainer);
 
+    // Wait for DOM to render
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     try {
       // Use html2canvas to render
       const canvas = await html2canvas(tempContainer, {
         scale: 2,
         useCORS: true,
-        backgroundColor: '#FFDE03'
+        backgroundColor: '#FFDE03',
+        logging: false,
+        allowTaint: true
       });
 
       const imgData = canvas.toDataURL('image/png');
