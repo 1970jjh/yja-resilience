@@ -100,11 +100,15 @@ export const getRoomsByAdmin = async (adminId: string): Promise<Room[]> => {
   const { db } = initializeFirebase();
   const q = query(
     collection(db, 'rooms'),
-    where('createdBy', '==', adminId),
-    orderBy('createdAt', 'desc')
+    where('createdBy', '==', adminId)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
+  const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
+  return rooms.sort((a, b) => {
+    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return dateB - dateA;
+  });
 };
 
 export const updateRoom = async (roomId: string, data: Partial<Room>) => {
@@ -117,11 +121,16 @@ export const getAllActiveRooms = async (): Promise<Room[]> => {
   const { db } = initializeFirebase();
   const q = query(
     collection(db, 'rooms'),
-    where('isActive', '==', true),
-    orderBy('createdAt', 'desc')
+    where('isActive', '==', true)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
+  const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
+  // JavaScript에서 정렬 (최신순)
+  return rooms.sort((a, b) => {
+    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return dateB - dateA;
+  });
 };
 
 // 방 삭제 (비활성화)
@@ -164,11 +173,15 @@ export const getParticipantsByRoom = async (roomId: string): Promise<Participant
   const { db } = initializeFirebase();
   const q = query(
     collection(db, 'participants'),
-    where('roomId', '==', roomId),
-    orderBy('completedAt', 'desc')
+    where('roomId', '==', roomId)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Participant));
+  const participants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Participant));
+  return participants.sort((a, b) => {
+    const dateA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+    const dateB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+    return dateB - dateA;
+  });
 };
 
 export const getParticipant = async (participantId: string): Promise<Participant | null> => {
