@@ -126,6 +126,24 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Auto-refresh for admin dashboard (every 5 seconds when room is selected)
+  useEffect(() => {
+    if (step === 'admin-dashboard' && selectedRoom) {
+      const interval = setInterval(async () => {
+        try {
+          const participants = await getParticipantsByRoom(selectedRoom.id);
+          setRoomParticipants(participants);
+          setRoomStats(calculateRoomStats(participants));
+          // Also refresh room list to get updated participant counts
+          await loadActiveRooms();
+        } catch (e) {
+          console.error('Auto-refresh error:', e);
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [step, selectedRoom]);
+
   const loadActiveRooms = async () => {
     try {
       const rooms = await getAllActiveRooms();
@@ -493,6 +511,32 @@ const App: React.FC = () => {
       teamGroups[team].push(p);
     });
     return teamGroups;
+  };
+
+  // Calculate team statistics
+  const getTeamStats = () => {
+    const teamGroups = getParticipantsByTeam();
+    const teamStats: Record<string, { count: number; avgScore: number; participants: Participant[] }> = {};
+
+    Object.entries(teamGroups).forEach(([team, participants]) => {
+      const avgScore = participants.length > 0
+        ? Math.round(participants.reduce((sum, p) => sum + p.result.totalScore, 0) / participants.length)
+        : 0;
+      teamStats[team] = {
+        count: participants.length,
+        avgScore,
+        participants
+      };
+    });
+
+    return teamStats;
+  };
+
+  // Generate individual PDF for a participant
+  const handleIndividualPDF = async (participant: Participant) => {
+    setSelectedParticipant(participant);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await generateAndDownloadPDF(participant);
   };
 
   // Render functions
@@ -925,6 +969,7 @@ const App: React.FC = () => {
 
   const renderAdminDashboard = () => {
     const teamGroups = getParticipantsByTeam();
+    const teamStats = getTeamStats();
     const filteredParticipants = selectedTeamFilter
       ? roomParticipants.filter(p => (p.team || '미지정') === selectedTeamFilter)
       : roomParticipants;
@@ -934,7 +979,12 @@ const App: React.FC = () => {
         <div className="max-w-6xl mx-auto">
           {/* Header */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-brutal">관리자 대시보드</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-brutal">관리자 대시보드</h1>
+              <span className="text-xs bg-[#A3E635] px-2 py-1 brutal-border animate-pulse">
+                실시간 업데이트 중
+              </span>
+            </div>
             <button
               onClick={() => { setIsAdmin(false); setStep('landing'); }}
               className="text-sm underline text-red-500"
@@ -1069,8 +1119,24 @@ const App: React.FC = () => {
                           CSV 다운로드
                         </Button>
                         <Button onClick={handleBatchPDFDownload} variant="primary" className="text-sm py-2">
-                          전체 PDF 다운로드
+                          전체 PDF 일괄 다운로드
                         </Button>
+                      </div>
+                    </Card>
+                  )}
+
+                  {/* Team Statistics */}
+                  {Object.keys(teamStats).length > 0 && (
+                    <Card className="mb-4 border-4 bg-[#00D1FF]">
+                      <h3 className="font-brutal mb-4">팀별 통계</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {Object.entries(teamStats).sort((a, b) => a[0].localeCompare(b[0])).map(([team, stats]) => (
+                          <div key={team} className="bg-white p-3 brutal-border text-center">
+                            <div className="font-brutal text-sm mb-1">{team}</div>
+                            <div className="text-2xl font-brutal">{stats.avgScore}</div>
+                            <div className="text-xs opacity-70">{stats.count}명 참여</div>
+                          </div>
+                        ))}
                       </div>
                     </Card>
                   )}
@@ -1113,63 +1179,78 @@ const App: React.FC = () => {
                     {selectedParticipant ? (
                       <div>
                         <button onClick={() => setSelectedParticipant(null)} className="text-sm underline mb-4">
-                          목록으로 돌아가기
+                          ← 목록으로 돌아가기
                         </button>
                         <div className="bg-gray-50 p-4 brutal-border">
-                          <h4 className="font-brutal text-lg mb-2">{selectedParticipant.name}</h4>
-                          <p className="text-sm opacity-70 mb-4">{selectedParticipant.team || '미지정'}</p>
-                          <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div className="flex justify-between items-start mb-4">
                             <div>
-                              <span className="text-xs opacity-70">총점</span>
-                              <div className="text-2xl font-brutal">{selectedParticipant.result.totalScore}</div>
+                              <h4 className="font-brutal text-lg">{selectedParticipant.name}</h4>
+                              <p className="text-sm opacity-70">{selectedParticipant.team || '미지정'}</p>
                             </div>
-                            <div>
+                            <Button onClick={() => handleIndividualPDF(selectedParticipant)} variant="success" className="text-xs py-1 px-3">
+                              PDF 저장
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div className="bg-white p-3 brutal-border text-center">
+                              <span className="text-xs opacity-70">총점</span>
+                              <div className="text-3xl font-brutal">{selectedParticipant.result.totalScore}</div>
+                            </div>
+                            <div className="bg-white p-3 brutal-border text-center">
                               <span className="text-xs opacity-70">유형</span>
-                              <div className="font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
+                              <div className="text-xl font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
                             </div>
                           </div>
-                          <div className="space-y-2">
+                          <div className="space-y-2 bg-white p-3 brutal-border">
                             <div className="flex justify-between text-sm">
                               <span>자기조절능력</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}점</span>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span>대인관계능력</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}점</span>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span>긍정성</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}점</span>
                             </div>
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                      <div className="space-y-2 max-h-[500px] overflow-y-auto">
                         {filteredParticipants.map(p => (
                           <div
                             key={p.id}
-                            onClick={() => setSelectedParticipant(p)}
-                            className="p-3 bg-white brutal-border cursor-pointer hover:bg-gray-50"
+                            className="p-3 bg-white brutal-border hover:bg-gray-50"
                           >
                             <div className="flex justify-between items-center">
-                              <div>
+                              <div className="flex items-center gap-2 cursor-pointer flex-1" onClick={() => setSelectedParticipant(p)}>
                                 <span className="font-bold">{p.name}</span>
-                                <span className="text-xs ml-2 px-2 py-0.5 bg-gray-100 brutal-border border-[1px]">{p.team || '미지정'}</span>
+                                <span className="text-xs px-2 py-0.5 bg-gray-100 brutal-border border-[1px]">{p.team || '미지정'}</span>
                               </div>
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2">
                                 <span className={`text-xs px-2 py-1 font-bold ${p.result.totalScore >= 201 ? 'bg-[#A3E635]' : p.result.totalScore >= 181 ? 'bg-[#FFDE03]' : 'bg-[#FF5C00] text-white'}`}>
                                   {p.result.totalScore}점
                                 </span>
-                                <span className="text-xs opacity-50">
-                                  {new Date(p.completedAt).toLocaleDateString()}
+                                <span className="text-[10px] opacity-50 hidden md:inline">
+                                  {new Date(p.completedAt).toLocaleTimeString()}
                                 </span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleIndividualPDF(p); }}
+                                  className="text-xs px-2 py-1 bg-white brutal-border hover:bg-[#A3E635]"
+                                >
+                                  PDF
+                                </button>
                               </div>
                             </div>
                           </div>
                         ))}
                         {filteredParticipants.length === 0 && (
-                          <p className="text-center text-sm opacity-50 py-8">참여자가 없습니다.</p>
+                          <div className="text-center py-12">
+                            <p className="text-lg opacity-50 mb-2">아직 참여자가 없습니다</p>
+                            <p className="text-xs opacity-40">참가자가 검사를 완료하면 여기에 표시됩니다</p>
+                          </div>
                         )}
                       </div>
                     )}
