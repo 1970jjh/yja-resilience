@@ -44,8 +44,8 @@ const Button: React.FC<{
   );
 };
 
-const Card: React.FC<{ children: React.ReactNode; className?: string; id?: string }> = ({ children, className = '', id }) => (
-  <div id={id} className={`bg-white brutal-border brutal-shadow p-6 mb-6 ${className}`}>
+const Card: React.FC<{ children: React.ReactNode; className?: string; id?: string; onClick?: () => void }> = ({ children, className = '', id, onClick }) => (
+  <div id={id} onClick={onClick} className={`bg-white brutal-border brutal-shadow p-6 mb-6 ${className}`}>
     {children}
   </div>
 );
