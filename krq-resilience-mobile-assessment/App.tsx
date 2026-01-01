@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { QUESTIONS, PERSONA_RULES, DETAILED_FEEDBACK_DATA, OVERALL_INTERPRETATIONS, RESILIENCE_INTRO } from './constants';
 import { Category, SubCategory, EnhancedAssessmentResult, SubCategoryAnalysis, Room, Participant, RoomStats } from './types';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, Cell } from 'recharts';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
@@ -530,6 +530,43 @@ const App: React.FC = () => {
     });
 
     return teamStats;
+  };
+
+  // Calculate group average for subcategories (for visualization)
+  const getGroupSubCategoryAverages = () => {
+    if (roomParticipants.length === 0) return [];
+
+    const subCategoryNames = Object.values(SubCategory);
+    return subCategoryNames.map(sub => {
+      const avgScore = roomParticipants.reduce((sum, p) => sum + (p.result.subCategoryScores[sub] || 0), 0) / roomParticipants.length;
+      const maxScore = sub === SubCategory.LIFE_SATISFACTION ? 25 : 30;
+      return {
+        name: sub.replace('능력', '').replace('도', ''),
+        score: Math.round(avgScore * 10) / 10,
+        maxScore,
+        percentage: Math.round((avgScore / maxScore) * 100)
+      };
+    });
+  };
+
+  // Calculate group average for categories (for visualization)
+  const getGroupCategoryAverages = () => {
+    if (roomParticipants.length === 0) return [];
+
+    const koreanAverages: Record<Category, number> = {
+      [Category.SELF_REGULATION]: 63.5,
+      [Category.INTERPERSONAL]: 67.8,
+      [Category.POSITIVITY]: 63.4,
+    };
+
+    return Object.values(Category).map(cat => {
+      const avgScore = roomParticipants.reduce((sum, p) => sum + (p.result.categoryScores[cat] || 0), 0) / roomParticipants.length;
+      return {
+        name: cat,
+        우리그룹: Math.round(avgScore * 10) / 10,
+        한국평균: koreanAverages[cat]
+      };
+    });
   };
 
   // Generate individual PDF for a participant
@@ -1167,6 +1204,64 @@ const App: React.FC = () => {
                     </Card>
                   )}
 
+                  {/* Visualization Charts */}
+                  {roomStats && roomStats.totalParticipants > 0 && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                      {/* Group Radar Chart - 9 Subcategories */}
+                      <Card className="border-4">
+                        <h3 className="font-brutal mb-2 text-sm">그룹 전체 9가지 요인 분석</h3>
+                        <p className="text-xs opacity-60 mb-3">낮은 영역이 우선 개선 필요 영역입니다</p>
+                        <div className="h-64 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <RadarChart cx="50%" cy="50%" outerRadius="70%" data={getGroupSubCategoryAverages()}>
+                              <PolarGrid stroke="#ddd" />
+                              <PolarAngleAxis dataKey="name" tick={{ fill: 'black', fontWeight: '700', fontSize: 9 }} />
+                              <Radar name="그룹평균" dataKey="score" stroke="#000" fill="#A3E635" fillOpacity={0.6} />
+                            </RadarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        {/* Lowest 3 areas */}
+                        <div className="mt-3 p-2 bg-[#FF5C00] text-white brutal-border">
+                          <div className="text-xs font-bold mb-1">⚠️ 우선 개선 필요 영역</div>
+                          <div className="text-xs">
+                            {getGroupSubCategoryAverages()
+                              .sort((a, b) => a.percentage - b.percentage)
+                              .slice(0, 3)
+                              .map((item, i) => `${i + 1}. ${item.name} (${item.percentage}%)`)
+                              .join(' / ')}
+                          </div>
+                        </div>
+                      </Card>
+
+                      {/* Category Comparison Bar Chart */}
+                      <Card className="border-4">
+                        <h3 className="font-brutal mb-2 text-sm">한국인 평균 대비 우리 그룹</h3>
+                        <p className="text-xs opacity-60 mb-3">3개 영역별 평균 점수 비교</p>
+                        <div className="h-64 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={getGroupCategoryAverages()} layout="vertical" margin={{ left: 20, right: 20 }}>
+                              <XAxis type="number" domain={[0, 90]} tick={{ fontSize: 10 }} />
+                              <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fontWeight: 'bold' }} width={80} />
+                              <Tooltip />
+                              <Legend wrapperStyle={{ fontSize: '10px' }} />
+                              <Bar dataKey="우리그룹" fill="#A3E635" />
+                              <Bar dataKey="한국평균" fill="#999" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        {/* Summary */}
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                          {getGroupCategoryAverages().map(cat => (
+                            <div key={cat.name} className={`p-2 brutal-border text-xs ${cat.우리그룹 >= cat.한국평균 ? 'bg-[#A3E635]' : 'bg-[#FF5C00] text-white'}`}>
+                              <div className="font-bold">{cat.name.split('능력')[0]}</div>
+                              <div>{cat.우리그룹 >= cat.한국평균 ? '▲ 평균 이상' : '▼ 평균 이하'}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    </div>
+                  )}
+
                   {/* Team Statistics */}
                   {Object.keys(teamStats).length > 0 && (
                     <Card className="mb-4 border-4 bg-[#00D1FF]">
@@ -1233,28 +1328,84 @@ const App: React.FC = () => {
                               PDF 저장
                             </Button>
                           </div>
+
+                          {/* Individual Score Overview */}
                           <div className="grid grid-cols-2 gap-4 mb-4">
                             <div className="bg-white p-3 brutal-border text-center">
                               <span className="text-xs opacity-70">총점</span>
                               <div className="text-3xl font-brutal">{selectedParticipant.result.totalScore}</div>
+                              <div className="text-xs mt-1">
+                                {roomStats && (
+                                  selectedParticipant.result.totalScore >= roomStats.averageTotalScore
+                                    ? <span className="text-[#A3E635] font-bold">▲ 그룹평균({roomStats.averageTotalScore}) 이상</span>
+                                    : <span className="text-[#FF5C00] font-bold">▼ 그룹평균({roomStats.averageTotalScore}) 이하</span>
+                                )}
+                              </div>
                             </div>
                             <div className="bg-white p-3 brutal-border text-center">
                               <span className="text-xs opacity-70">유형</span>
                               <div className="text-xl font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
                             </div>
                           </div>
-                          <div className="space-y-2 bg-white p-3 brutal-border">
-                            <div className="flex justify-between text-sm">
-                              <span>자기조절능력</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}점</span>
+
+                          {/* Individual vs Group Comparison Chart */}
+                          <div className="bg-white p-3 brutal-border mb-4">
+                            <h5 className="font-brutal text-xs mb-2">개인 vs 그룹 평균 비교</h5>
+                            <div className="h-48 w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  data={Object.values(Category).map(cat => {
+                                    const groupAvg = roomParticipants.length > 0
+                                      ? Math.round(roomParticipants.reduce((sum, p) => sum + (p.result.categoryScores[cat] || 0), 0) / roomParticipants.length * 10) / 10
+                                      : 0;
+                                    return {
+                                      name: cat.replace('능력', ''),
+                                      개인: selectedParticipant.result.categoryScores[cat],
+                                      그룹평균: groupAvg
+                                    };
+                                  })}
+                                  layout="vertical"
+                                  margin={{ left: 10, right: 10 }}
+                                >
+                                  <XAxis type="number" domain={[0, 90]} tick={{ fontSize: 10 }} />
+                                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9, fontWeight: 'bold' }} width={70} />
+                                  <Tooltip />
+                                  <Legend wrapperStyle={{ fontSize: '10px' }} />
+                                  <Bar dataKey="개인" fill="#00D1FF" />
+                                  <Bar dataKey="그룹평균" fill="#ddd" />
+                                </BarChart>
+                              </ResponsiveContainer>
                             </div>
-                            <div className="flex justify-between text-sm">
-                              <span>대인관계능력</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}점</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span>긍정성</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}점</span>
+                          </div>
+
+                          {/* Category Scores */}
+                          <div className="space-y-2 bg-white p-3 brutal-border mb-4">
+                            {Object.values(Category).map(cat => {
+                              const groupAvg = roomParticipants.length > 0
+                                ? Math.round(roomParticipants.reduce((sum, p) => sum + (p.result.categoryScores[cat] || 0), 0) / roomParticipants.length * 10) / 10
+                                : 0;
+                              const diff = selectedParticipant.result.categoryScores[cat] - groupAvg;
+                              return (
+                                <div key={cat} className="flex justify-between items-center text-sm">
+                                  <span>{cat}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold">{selectedParticipant.result.categoryScores[cat]}점</span>
+                                    <span className={`text-xs px-1 ${diff >= 0 ? 'bg-[#A3E635]' : 'bg-[#FF5C00] text-white'}`}>
+                                      {diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Improvement Areas */}
+                          <div className="bg-[#FF5C00] text-white p-3 brutal-border">
+                            <h5 className="font-brutal text-xs mb-2">이 참가자의 개선 필요 영역</h5>
+                            <div className="text-xs space-y-1">
+                              {selectedParticipant.result.improvementAreas?.slice(0, 3).map((area, i) => (
+                                <div key={area}>{i + 1}. {area}</div>
+                              ))}
                             </div>
                           </div>
                         </div>
