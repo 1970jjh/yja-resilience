@@ -1161,9 +1161,16 @@ const App: React.FC = () => {
               </div>
 
               <div className="flex flex-wrap gap-2 mb-3">
-                <span className="text-xs font-bold">추천 도서:</span>
+                <span className="text-xs font-bold">📚 추천 도서:</span>
                 {analysis.detailedFeedback.recommendedBooks.map((book, i) => (
                   <span key={i} className="text-xs bg-white px-2 py-1 brutal-border border-1">{book}</span>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2 mb-3">
+                <span className="text-xs font-bold">🎬 추천 영화:</span>
+                {analysis.detailedFeedback.recommendedMovies?.map((movie, i) => (
+                  <span key={i} className="text-xs bg-[#00D1FF] px-2 py-1 brutal-border border-1">{movie}</span>
                 ))}
               </div>
 
