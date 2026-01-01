@@ -524,111 +524,269 @@ const App: React.FC = () => {
     }
   };
 
-  // Generate single participant PDF as blob
+  // Generate single participant PDF as blob using html2canvas for Korean support
   const generateParticipantPDFBlob = async (participant: Participant): Promise<Blob> => {
-    const pdf = new jsPDF('p', 'mm', 'a4');
     const result = participant.result;
     const personaRule = PERSONA_RULES.find(r => result.totalScore >= r.min);
 
-    // Add Korean font support (basic)
-    pdf.setFont('helvetica');
+    // Create temporary container for rendering
+    const tempContainer = document.createElement('div');
+    tempContainer.id = 'temp-pdf-container';
+    tempContainer.style.cssText = `
+      position: fixed;
+      left: -9999px;
+      top: 0;
+      width: 800px;
+      background: #FFDE03;
+      padding: 30px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    `;
 
-    let y = 20;
-    const marginLeft = 20;
-    const pageWidth = pdf.internal.pageSize.getWidth();
+    // Build HTML content
+    const subCategoryAnalysis = result.subCategoryAnalysis || [];
+    const sortedAnalysis = [...subCategoryAnalysis].sort((a, b) => a.percentage - b.percentage);
 
-    // Title
-    pdf.setFontSize(18);
-    pdf.text('KRQ-53 Resilience Report', pageWidth / 2, y, { align: 'center' });
-    y += 15;
+    tempContainer.innerHTML = `
+      <div style="border: 4px solid black; padding: 20px; background: #FFDE03;">
+        <!-- Header -->
+        <h1 style="font-size: 24px; font-weight: 900; text-align: center; margin: 0 0 10px 0; border-bottom: 4px solid black; padding-bottom: 10px;">
+          회복탄력성 심층 분석 리포트
+        </h1>
+        <p style="text-align: center; font-weight: bold; margin: 0 0 20px 0;">
+          ${participant.team || '-'} | ${participant.name}님 | ${new Date(participant.completedAt).toLocaleDateString()}
+        </p>
 
-    // Participant Info
-    pdf.setFontSize(12);
-    pdf.text(`Name: ${participant.name}`, marginLeft, y);
-    y += 8;
-    pdf.text(`Team: ${participant.team || '-'}`, marginLeft, y);
-    y += 8;
-    pdf.text(`Date: ${new Date(participant.completedAt).toLocaleDateString()}`, marginLeft, y);
-    y += 15;
+        <!-- Persona & Total Score -->
+        <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+          <div style="flex: 1; background: ${personaRule?.color || '#fff'}; border: 4px solid black; padding: 15px; text-align: center;">
+            <p style="font-size: 10px; font-weight: bold; margin: 0;">당신의 유형</p>
+            <div style="font-size: 40px; margin: 10px 0;">${personaRule?.emoji || ''}</div>
+            <h2 style="font-size: 20px; font-weight: 900; margin: 0 0 5px 0;">${result.persona}</h2>
+            <p style="font-size: 10px; font-weight: bold; margin: 0;">${personaRule?.desc || ''}</p>
+          </div>
+          <div style="flex: 1; background: white; border: 4px solid black; padding: 15px; text-align: center;">
+            <p style="font-size: 10px; font-weight: bold; margin: 0;">총점</p>
+            <div style="font-size: 48px; font-weight: 900; margin: 10px 0;">${result.totalScore}</div>
+            <div style="font-size: 9px; font-weight: bold;">
+              <p style="margin: 2px 0; ${result.totalScore >= 201 ? 'background: black; color: white; padding: 2px;' : 'opacity: 0.6;'}">201점 이상: 슈퍼 고무공</p>
+              <p style="margin: 2px 0; ${result.totalScore >= 181 && result.totalScore <= 200 ? 'background: black; color: white; padding: 2px;' : 'opacity: 0.6;'}">181-200점: 테니스공</p>
+              <p style="margin: 2px 0; ${result.totalScore <= 180 ? 'background: black; color: white; padding: 2px;' : 'opacity: 0.6;'}">180점 이하: 마시멜로우</p>
+            </div>
+          </div>
+        </div>
 
-    // Total Score Box
-    pdf.setFillColor(255, 222, 3);
-    pdf.rect(marginLeft, y, pageWidth - 40, 25, 'F');
-    pdf.setFontSize(14);
-    pdf.text(`Total Score: ${result.totalScore}`, marginLeft + 5, y + 10);
-    pdf.text(`Type: ${result.persona} ${personaRule?.emoji || ''}`, marginLeft + 5, y + 20);
-    y += 35;
+        <!-- Overall Interpretation -->
+        <div style="background: white; border: 4px solid black; padding: 15px; margin-bottom: 20px;">
+          <h3 style="font-weight: 900; font-size: 16px; margin: 0 0 10px 0; border-bottom: 2px solid black; padding-bottom: 5px;">종합 해석</h3>
+          <p style="font-size: 12px; line-height: 1.6; margin: 0;">${result.overallInterpretation}</p>
+        </div>
 
-    // Category Scores
-    pdf.setFontSize(12);
-    pdf.text('Category Scores:', marginLeft, y);
-    y += 10;
+        <!-- Strengths & Improvements -->
+        <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+          <div style="flex: 1; background: #A3E635; border: 4px solid black; padding: 15px;">
+            <h3 style="font-weight: 900; font-size: 14px; margin: 0 0 10px 0;">나의 강점 TOP 3</h3>
+            ${result.strengthAreas.map((area, i) => `
+              <div style="background: rgba(255,255,255,0.5); padding: 8px; margin-bottom: 8px; border-radius: 4px;">
+                <div style="font-weight: bold; font-size: 12px;">${i + 1}. ${area}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div style="flex: 1; background: #FF5C00; color: white; border: 4px solid black; padding: 15px;">
+            <h3 style="font-weight: 900; font-size: 14px; margin: 0 0 10px 0;">성장 필요 영역 TOP 3</h3>
+            ${result.improvementAreas.map((area, i) => `
+              <div style="background: rgba(255,255,255,0.2); padding: 8px; margin-bottom: 8px; border-radius: 4px;">
+                <div style="font-weight: bold; font-size: 12px;">${i + 1}. ${area}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
 
-    const categories = [
-      { name: 'Self-Regulation', score: result.categoryScores[Category.SELF_REGULATION], avg: 63.5 },
-      { name: 'Interpersonal', score: result.categoryScores[Category.INTERPERSONAL], avg: 67.8 },
-      { name: 'Positivity', score: result.categoryScores[Category.POSITIVITY], avg: 63.4 },
-    ];
+        <!-- Category Scores -->
+        <div style="background: white; border: 4px solid black; padding: 15px; margin-bottom: 20px;">
+          <h3 style="font-weight: 900; font-size: 14px; margin: 0 0 15px 0; border-bottom: 2px solid black; padding-bottom: 5px;">영역별 상세 점수</h3>
+          ${(Object.keys(categoryMapping) as Category[]).map(cat => {
+            const catScore = result.categoryScores[cat];
+            const avg = koreanAverageScores[cat];
+            return `
+              <div style="margin-bottom: 15px;">
+                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid black; padding-bottom: 5px; margin-bottom: 8px;">
+                  <div>
+                    <span style="font-weight: 900; font-size: 13px; color: ${categoryColor[cat]};">${cat}</span>
+                    <span style="font-size: 9px; opacity: 0.6; margin-left: 10px;">한국인 평균 ${avg}점</span>
+                  </div>
+                  <div style="text-align: right;">
+                    <span style="font-weight: 900; font-size: 16px;">${catScore}점</span>
+                    <span style="font-size: 9px; color: ${catScore >= avg ? '#A3E635' : '#FF5C00'}; font-weight: bold; margin-left: 5px;">
+                      ${catScore >= avg ? '▲ 평균 이상' : '▼ 평균 이하'}
+                    </span>
+                  </div>
+                </div>
+                <div style="padding-left: 10px;">
+                  ${categoryMapping[cat].map(sub => {
+                    const analysis = subCategoryAnalysis.find(s => s.subCategory === sub);
+                    if (!analysis) return '';
+                    return `
+                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 4px;">
+                        <span style="font-weight: bold;">${sub}</span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                          <span style="font-size: 9px; background: #eee; padding: 1px 4px;">${analysis.level}</span>
+                          <div style="width: 60px; height: 8px; background: #ddd; border: 1px solid black;">
+                            <div style="height: 100%; background: ${categoryColor[cat]}; width: ${analysis.percentage}%;"></div>
+                          </div>
+                          <span style="font-weight: 900; width: 40px; text-align: right;">${analysis.score}/${analysis.maxScore}</span>
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
 
-    categories.forEach(cat => {
-      const diff = cat.score - cat.avg;
-      const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
-      pdf.text(`  ${cat.name}: ${cat.score} (Korean Avg: ${cat.avg}, ${diffStr})`, marginLeft, y);
-      y += 8;
-    });
-    y += 10;
+        <!-- 9 Factor Detailed Feedback -->
+        <div style="background: black; color: white; padding: 10px; text-align: center; font-weight: 900; font-size: 14px; margin-bottom: 15px;">
+          9가지 요인 맞춤 분석 및 성장 가이드
+        </div>
+        <p style="text-align: center; font-size: 10px; opacity: 0.7; margin-bottom: 15px;">※ 낮은 점수 순으로 표시됩니다</p>
 
-    // Subcategory Scores
-    pdf.text('9 Factor Scores:', marginLeft, y);
-    y += 10;
+        ${sortedAnalysis.map((analysis, idx) => `
+          <div style="background: white; border: 4px solid black; padding: 15px; margin-bottom: 15px;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+              <div>
+                <span style="font-size: 10px; font-weight: bold; padding: 2px 6px; margin-right: 8px; ${idx < 3 ? 'background: #FF5C00; color: white;' : 'background: black; color: white;'}">${idx + 1}</span>
+                <span style="font-weight: 900; font-size: 16px;">${analysis.subCategory}</span>
+                ${idx < 3 ? '<span style="font-size: 10px; color: #FF5C00; font-weight: bold; margin-left: 8px;">← 우선 개선</span>' : ''}
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 20px; font-weight: 900;">${analysis.score}<span style="font-size: 12px;">/${analysis.maxScore}</span></div>
+                <span style="font-size: 10px; padding: 2px 6px; font-weight: bold; ${analysis.percentage >= 70 ? 'background: #A3E635;' : analysis.percentage >= 50 ? 'background: #FFDE03;' : 'background: #FF5C00; color: white;'}">
+                  ${analysis.level}
+                </span>
+              </div>
+            </div>
 
-    const subCategories = [
-      { name: 'Emotion Control', key: SubCategory.EMOTION_CONTROL },
-      { name: 'Impulse Control', key: SubCategory.IMPULSE_CONTROL },
-      { name: 'Causal Analysis', key: SubCategory.CAUSAL_ANALYSIS },
-      { name: 'Communication', key: SubCategory.COMMUNICATION },
-      { name: 'Empathy', key: SubCategory.EMPATHY },
-      { name: 'Ego Expansion', key: SubCategory.EGO_EXPANSION },
-      { name: 'Self Optimism', key: SubCategory.SELF_OPTIMISM },
-      { name: 'Life Satisfaction', key: SubCategory.LIFE_SATISFACTION },
-      { name: 'Gratitude', key: SubCategory.GRATITUDE },
-    ];
+            <div style="margin-bottom: 12px;">
+              <h4 style="font-weight: bold; font-size: 12px; margin: 0 0 5px 0;">${analysis.detailedFeedback?.title || ''}</h4>
+              <p style="font-size: 10px; line-height: 1.5; margin: 0; opacity: 0.8;">${analysis.detailedFeedback?.description || ''}</p>
+            </div>
 
-    subCategories.forEach(sub => {
-      const score = result.subCategoryScores[sub.key];
-      const maxScore = sub.key === SubCategory.LIFE_SATISFACTION ? 25 : 30;
-      const percentage = Math.round((score / maxScore) * 100);
-      pdf.text(`  ${sub.name}: ${score}/${maxScore} (${percentage}%)`, marginLeft, y);
-      y += 7;
-    });
-    y += 10;
+            <div style="background: #f5f5f5; padding: 10px; border: 2px solid black; margin-bottom: 10px;">
+              <h5 style="font-weight: bold; font-size: 10px; margin: 0 0 5px 0;">현재 상태</h5>
+              <p style="font-size: 10px; margin: 0; opacity: 0.8;">${analysis.detailedFeedback?.currentState || ''}</p>
+            </div>
 
-    // Strength Areas
-    if (result.strengthAreas && result.strengthAreas.length > 0) {
-      pdf.text('Strength Areas:', marginLeft, y);
-      y += 8;
-      result.strengthAreas.forEach((area, i) => {
-        pdf.text(`  ${i + 1}. ${area}`, marginLeft, y);
-        y += 7;
+            <div style="margin-bottom: 10px;">
+              <h5 style="font-weight: bold; font-size: 10px; margin: 0 0 5px 0;">실천 방법</h5>
+              ${(analysis.detailedFeedback?.actionPlan || []).map(action => `
+                <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
+                  <span style="color: #A3E635; font-weight: bold;">+</span>
+                  <span>${action}</span>
+                </div>
+              `).join('')}
+            </div>
+
+            <div style="background: #A3E635; padding: 10px; border: 2px solid black; margin-bottom: 10px;">
+              <h5 style="font-weight: bold; font-size: 10px; margin: 0 0 5px 0;">이번 주 미션</h5>
+              <p style="font-size: 10px; margin: 0;">${analysis.detailedFeedback?.weeklyMission || ''}</p>
+            </div>
+
+            <div style="margin-bottom: 8px;">
+              <span style="font-size: 10px; font-weight: bold;">📚 추천 도서: </span>
+              ${(analysis.detailedFeedback?.recommendedBooks || []).map(book => `
+                <span style="font-size: 9px; background: white; padding: 2px 6px; border: 1px solid black; margin-right: 5px;">${book}</span>
+              `).join('')}
+            </div>
+
+            <div style="margin-bottom: 10px;">
+              <span style="font-size: 10px; font-weight: bold;">🎬 추천 영화: </span>
+              ${(analysis.detailedFeedback?.recommendedMovies || []).map(movie => `
+                <span style="font-size: 9px; background: #00D1FF; padding: 2px 6px; border: 1px solid black; margin-right: 5px;">${movie}</span>
+              `).join('')}
+            </div>
+
+            <div style="background: black; color: white; padding: 8px; text-align: center;">
+              <p style="font-size: 10px; font-style: italic; margin: 0;">"${analysis.detailedFeedback?.affirmation || ''}"</p>
+            </div>
+          </div>
+        `).join('')}
+
+        <!-- Growth Plan -->
+        <div style="background: #00D1FF; border: 4px solid black; padding: 15px;">
+          <h3 style="font-weight: 900; font-size: 16px; text-align: center; margin: 0 0 15px 0;">나만의 성장 로드맵</h3>
+
+          <div style="background: white; padding: 12px; border: 2px solid black; margin-bottom: 10px;">
+            <h4 style="font-weight: 900; font-size: 12px; margin: 0 0 8px 0;">즉시 실천 (이번 주)</h4>
+            ${(result.personalGrowthPlan?.immediate || []).map((item, i) => `
+              <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
+                <span style="font-weight: bold;">${i + 1}.</span>
+                <span>${item}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div style="background: white; padding: 12px; border: 2px solid black; margin-bottom: 10px;">
+            <h4 style="font-weight: 900; font-size: 12px; margin: 0 0 8px 0;">단기 목표 (1개월)</h4>
+            ${(result.personalGrowthPlan?.shortTerm || []).map(item => `
+              <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
+                <span style="font-weight: bold;">+</span>
+                <span>${item}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div style="background: white; padding: 12px; border: 2px solid black;">
+            <h4 style="font-weight: 900; font-size: 12px; margin: 0 0 8px 0;">장기 목표 (3개월+)</h4>
+            ${(result.personalGrowthPlan?.longTerm || []).map(item => `
+              <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
+                <span style="font-weight: bold;">+</span>
+                <span>${item}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="margin-top: 20px; padding: 15px; border: 2px dashed black; text-align: center; font-size: 9px; font-weight: bold; opacity: 0.4;">
+          KRQ-53 심층 분석 엔진 | JJ Creative Resilience Solution | ${new Date().toLocaleDateString()}
+        </div>
+      </div>
+    `;
+
+    // Append to body for rendering
+    document.body.appendChild(tempContainer);
+
+    try {
+      // Use html2canvas to render
+      const canvas = await html2canvas(tempContainer, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#FFDE03'
       });
-      y += 5;
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      let heightLeft = pdfHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pdf.internal.pageSize.getHeight();
+
+      while (heightLeft >= 0) {
+        position = heightLeft - pdfHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pdf.internal.pageSize.getHeight();
+      }
+
+      return pdf.output('blob');
+    } finally {
+      // Clean up
+      document.body.removeChild(tempContainer);
     }
-
-    // Improvement Areas
-    if (result.improvementAreas && result.improvementAreas.length > 0) {
-      pdf.text('Improvement Areas:', marginLeft, y);
-      y += 8;
-      result.improvementAreas.forEach((area, i) => {
-        pdf.text(`  ${i + 1}. ${area}`, marginLeft, y);
-        y += 7;
-      });
-    }
-
-    // Footer
-    pdf.setFontSize(8);
-    pdf.text('KRQ-53 Resilience Assessment | JJ Creative', pageWidth / 2, 285, { align: 'center' });
-
-    return pdf.output('blob');
   };
 
   // Batch PDF download as ZIP
