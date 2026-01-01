@@ -1,7 +1,7 @@
 {
   "name": "krq-resilience-mobile-assessment",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,12 +11,16 @@
   "dependencies": {
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-router-dom": "^7.1.1",
     "recharts": "^3.6.0",
     "html2canvas": "^1.4.1",
-    "jspdf": "^3.0.4"
+    "jspdf": "^3.0.4",
+    "firebase": "^11.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
