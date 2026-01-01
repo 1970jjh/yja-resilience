@@ -126,6 +126,24 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Auto-refresh for admin dashboard (every 5 seconds when room is selected)
+  useEffect(() => {
+    if (step === 'admin-dashboard' && selectedRoom) {
+      const interval = setInterval(async () => {
+        try {
+          const participants = await getParticipantsByRoom(selectedRoom.id);
+          setRoomParticipants(participants);
+          setRoomStats(calculateRoomStats(participants));
+          // Also refresh room list to get updated participant counts
+          await loadActiveRooms();
+        } catch (e) {
+          console.error('Auto-refresh error:', e);
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [step, selectedRoom]);
+
   const loadActiveRooms = async () => {
     try {
       const rooms = await getAllActiveRooms();
@@ -495,6 +513,32 @@ const App: React.FC = () => {
     return teamGroups;
   };
 
+  // Calculate team statistics
+  const getTeamStats = () => {
+    const teamGroups = getParticipantsByTeam();
+    const teamStats: Record<string, { count: number; avgScore: number; participants: Participant[] }> = {};
+
+    Object.entries(teamGroups).forEach(([team, participants]) => {
+      const avgScore = participants.length > 0
+        ? Math.round(participants.reduce((sum, p) => sum + p.result.totalScore, 0) / participants.length)
+        : 0;
+      teamStats[team] = {
+        count: participants.length,
+        avgScore,
+        participants
+      };
+    });
+
+    return teamStats;
+  };
+
+  // Generate individual PDF for a participant
+  const handleIndividualPDF = async (participant: Participant) => {
+    setSelectedParticipant(participant);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await generateAndDownloadPDF(participant);
+  };
+
   // Render functions
   const renderLanding = () => (
     <div className="min-h-screen p-4 md:p-6 bg-gradient-to-br from-[#FFDE03] to-[#A3E635]">
@@ -668,6 +712,29 @@ const App: React.FC = () => {
       [Category.POSITIVITY]: "#A3E635",
     };
 
+    // 한국인 평균 점수
+    const koreanAverageScores = {
+      [Category.SELF_REGULATION]: 63.5,
+      [Category.INTERPERSONAL]: 67.8,
+      [Category.POSITIVITY]: 63.4,
+    };
+
+    // 하위요인별 간단 설명
+    const subCategoryDescriptions: Record<SubCategory, string> = {
+      [SubCategory.EMOTION_CONTROL]: "스트레스 상황에서 감정을 조절하고 침착함을 유지하는 능력",
+      [SubCategory.IMPULSE_CONTROL]: "충동적인 반응을 억제하고 인내심 있게 행동하는 능력",
+      [SubCategory.CAUSAL_ANALYSIS]: "문제의 원인을 정확히 파악하고 분석하는 능력",
+      [SubCategory.COMMUNICATION]: "자신의 생각과 감정을 효과적으로 전달하는 능력",
+      [SubCategory.EMPATHY]: "타인의 감정과 입장을 이해하고 공감하는 능력",
+      [SubCategory.EGO_EXPANSION]: "건강한 인간관계를 형성하고 유지하는 능력",
+      [SubCategory.SELF_OPTIMISM]: "미래에 대해 긍정적으로 기대하고 자신을 믿는 능력",
+      [SubCategory.LIFE_SATISFACTION]: "현재 삶에 대한 전반적인 만족감과 행복감",
+      [SubCategory.GRATITUDE]: "일상 속 감사할 것들을 인식하고 표현하는 능력",
+    };
+
+    // 9가지 요인을 낮은 점수순으로 정렬
+    const sortedSubCategoryAnalysis = [...result.subCategoryAnalysis].sort((a, b) => a.percentage - b.percentage);
+
     const radarData = result.subCategoryAnalysis.map(s => ({
       subject: s.subCategory.replace('능력', '').replace('도', '').replace('성', ''),
       A: s.score,
@@ -727,20 +794,26 @@ const App: React.FC = () => {
           {/* Strengths & Improvements */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <Card className="border-4 bg-[#A3E635]">
-              <h3 className="font-brutal text-sm mb-2">나의 강점 TOP 3</h3>
-              <ul className="text-sm space-y-1">
+              <h3 className="font-brutal text-sm mb-3">나의 강점 TOP 3</h3>
+              <div className="space-y-3">
                 {result.strengthAreas.map((area, i) => (
-                  <li key={area} className="font-bold">{i + 1}. {area}</li>
+                  <div key={area} className="bg-white bg-opacity-50 p-2 rounded">
+                    <div className="font-bold text-sm">{i + 1}. {area}</div>
+                    <p className="text-xs opacity-80 mt-1">{subCategoryDescriptions[area as SubCategory]}</p>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </Card>
             <Card className="border-4 bg-[#FF5C00] text-white">
-              <h3 className="font-brutal text-sm mb-2">성장 필요 영역 TOP 3</h3>
-              <ul className="text-sm space-y-1">
+              <h3 className="font-brutal text-sm mb-3">성장 필요 영역 TOP 3</h3>
+              <div className="space-y-3">
                 {result.improvementAreas.map((area, i) => (
-                  <li key={area} className="font-bold">{i + 1}. {area}</li>
+                  <div key={area} className="bg-white bg-opacity-20 p-2 rounded">
+                    <div className="font-bold text-sm">{i + 1}. {area}</div>
+                    <p className="text-xs opacity-90 mt-1">{subCategoryDescriptions[area as SubCategory]}</p>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </Card>
           </div>
 
@@ -751,8 +824,19 @@ const App: React.FC = () => {
               {(Object.keys(categoryMapping) as Category[]).map(cat => (
                 <div key={cat} className="space-y-2">
                   <div className="flex justify-between items-center border-b border-black pb-1">
-                    <h4 className="font-brutal text-sm" style={{ color: categoryColor[cat] }}>{cat}</h4>
-                    <span className="font-brutal text-sm">{result.categoryScores[cat]}점</span>
+                    <div>
+                      <h4 className="font-brutal text-sm" style={{ color: categoryColor[cat] }}>{cat}</h4>
+                      <span className="text-[10px] opacity-60">한국인 평균 {koreanAverageScores[cat]}점</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="font-brutal text-lg">{result.categoryScores[cat]}점</span>
+                      <div className="text-[10px]">
+                        {result.categoryScores[cat] >= koreanAverageScores[cat]
+                          ? <span className="text-[#A3E635] font-bold">▲ 평균 이상</span>
+                          : <span className="text-[#FF5C00] font-bold">▼ 평균 이하</span>
+                        }
+                      </div>
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 gap-2 pl-2">
                     {categoryMapping[cat].map(sub => {
@@ -778,13 +862,15 @@ const App: React.FC = () => {
 
           {/* Detailed Feedback */}
           <h3 className="font-brutal text-lg mb-4 uppercase bg-black text-white p-2 text-center">9가지 요인 맞춤 분석 및 성장 가이드</h3>
+          <p className="text-xs text-center mb-4 opacity-70">※ 낮은 점수 순으로 표시됩니다. 우선 개선이 필요한 영역부터 확인하세요.</p>
 
-          {result.subCategoryAnalysis.map((analysis, idx) => (
+          {sortedSubCategoryAnalysis.map((analysis, idx) => (
             <Card key={analysis.subCategory} className="border-4 mb-4">
               <div className="flex justify-between items-start mb-3">
                 <div>
-                  <span className="text-xs font-bold bg-black text-white px-2 py-1 mr-2">{idx + 1}</span>
+                  <span className={`text-xs font-bold px-2 py-1 mr-2 ${idx < 3 ? 'bg-[#FF5C00] text-white' : 'bg-black text-white'}`}>{idx + 1}</span>
                   <span className="font-brutal text-lg">{analysis.subCategory}</span>
+                  {idx < 3 && <span className="text-xs ml-2 text-[#FF5C00] font-bold">← 우선 개선</span>}
                 </div>
                 <div className="text-right">
                   <div className="text-2xl font-brutal">{analysis.score}<span className="text-sm">/{analysis.maxScore}</span></div>
@@ -925,6 +1011,7 @@ const App: React.FC = () => {
 
   const renderAdminDashboard = () => {
     const teamGroups = getParticipantsByTeam();
+    const teamStats = getTeamStats();
     const filteredParticipants = selectedTeamFilter
       ? roomParticipants.filter(p => (p.team || '미지정') === selectedTeamFilter)
       : roomParticipants;
@@ -934,7 +1021,12 @@ const App: React.FC = () => {
         <div className="max-w-6xl mx-auto">
           {/* Header */}
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-brutal">관리자 대시보드</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-brutal">관리자 대시보드</h1>
+              <span className="text-xs bg-[#A3E635] px-2 py-1 brutal-border animate-pulse">
+                실시간 업데이트 중
+              </span>
+            </div>
             <button
               onClick={() => { setIsAdmin(false); setStep('landing'); }}
               className="text-sm underline text-red-500"
@@ -1069,8 +1161,24 @@ const App: React.FC = () => {
                           CSV 다운로드
                         </Button>
                         <Button onClick={handleBatchPDFDownload} variant="primary" className="text-sm py-2">
-                          전체 PDF 다운로드
+                          전체 PDF 일괄 다운로드
                         </Button>
+                      </div>
+                    </Card>
+                  )}
+
+                  {/* Team Statistics */}
+                  {Object.keys(teamStats).length > 0 && (
+                    <Card className="mb-4 border-4 bg-[#00D1FF]">
+                      <h3 className="font-brutal mb-4">팀별 통계</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {Object.entries(teamStats).sort((a, b) => a[0].localeCompare(b[0])).map(([team, stats]) => (
+                          <div key={team} className="bg-white p-3 brutal-border text-center">
+                            <div className="font-brutal text-sm mb-1">{team}</div>
+                            <div className="text-2xl font-brutal">{stats.avgScore}</div>
+                            <div className="text-xs opacity-70">{stats.count}명 참여</div>
+                          </div>
+                        ))}
                       </div>
                     </Card>
                   )}
@@ -1113,63 +1221,78 @@ const App: React.FC = () => {
                     {selectedParticipant ? (
                       <div>
                         <button onClick={() => setSelectedParticipant(null)} className="text-sm underline mb-4">
-                          목록으로 돌아가기
+                          ← 목록으로 돌아가기
                         </button>
                         <div className="bg-gray-50 p-4 brutal-border">
-                          <h4 className="font-brutal text-lg mb-2">{selectedParticipant.name}</h4>
-                          <p className="text-sm opacity-70 mb-4">{selectedParticipant.team || '미지정'}</p>
-                          <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div className="flex justify-between items-start mb-4">
                             <div>
-                              <span className="text-xs opacity-70">총점</span>
-                              <div className="text-2xl font-brutal">{selectedParticipant.result.totalScore}</div>
+                              <h4 className="font-brutal text-lg">{selectedParticipant.name}</h4>
+                              <p className="text-sm opacity-70">{selectedParticipant.team || '미지정'}</p>
                             </div>
-                            <div>
+                            <Button onClick={() => handleIndividualPDF(selectedParticipant)} variant="success" className="text-xs py-1 px-3">
+                              PDF 저장
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div className="bg-white p-3 brutal-border text-center">
+                              <span className="text-xs opacity-70">총점</span>
+                              <div className="text-3xl font-brutal">{selectedParticipant.result.totalScore}</div>
+                            </div>
+                            <div className="bg-white p-3 brutal-border text-center">
                               <span className="text-xs opacity-70">유형</span>
-                              <div className="font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
+                              <div className="text-xl font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
                             </div>
                           </div>
-                          <div className="space-y-2">
+                          <div className="space-y-2 bg-white p-3 brutal-border">
                             <div className="flex justify-between text-sm">
                               <span>자기조절능력</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}점</span>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span>대인관계능력</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}점</span>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span>긍정성</span>
-                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}점</span>
                             </div>
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                      <div className="space-y-2 max-h-[500px] overflow-y-auto">
                         {filteredParticipants.map(p => (
                           <div
                             key={p.id}
-                            onClick={() => setSelectedParticipant(p)}
-                            className="p-3 bg-white brutal-border cursor-pointer hover:bg-gray-50"
+                            className="p-3 bg-white brutal-border hover:bg-gray-50"
                           >
                             <div className="flex justify-between items-center">
-                              <div>
+                              <div className="flex items-center gap-2 cursor-pointer flex-1" onClick={() => setSelectedParticipant(p)}>
                                 <span className="font-bold">{p.name}</span>
-                                <span className="text-xs ml-2 px-2 py-0.5 bg-gray-100 brutal-border border-[1px]">{p.team || '미지정'}</span>
+                                <span className="text-xs px-2 py-0.5 bg-gray-100 brutal-border border-[1px]">{p.team || '미지정'}</span>
                               </div>
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2">
                                 <span className={`text-xs px-2 py-1 font-bold ${p.result.totalScore >= 201 ? 'bg-[#A3E635]' : p.result.totalScore >= 181 ? 'bg-[#FFDE03]' : 'bg-[#FF5C00] text-white'}`}>
                                   {p.result.totalScore}점
                                 </span>
-                                <span className="text-xs opacity-50">
-                                  {new Date(p.completedAt).toLocaleDateString()}
+                                <span className="text-[10px] opacity-50 hidden md:inline">
+                                  {new Date(p.completedAt).toLocaleTimeString()}
                                 </span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleIndividualPDF(p); }}
+                                  className="text-xs px-2 py-1 bg-white brutal-border hover:bg-[#A3E635]"
+                                >
+                                  PDF
+                                </button>
                               </div>
                             </div>
                           </div>
                         ))}
                         {filteredParticipants.length === 0 && (
-                          <p className="text-center text-sm opacity-50 py-8">참여자가 없습니다.</p>
+                          <div className="text-center py-12">
+                            <p className="text-lg opacity-50 mb-2">아직 참여자가 없습니다</p>
+                            <p className="text-xs opacity-40">참가자가 검사를 완료하면 여기에 표시됩니다</p>
+                          </div>
                         )}
                       </div>
                     )}
