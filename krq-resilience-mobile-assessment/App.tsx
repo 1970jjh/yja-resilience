@@ -5,6 +5,7 @@ import { Category, SubCategory, EnhancedAssessmentResult, SubCategoryAnalysis, R
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, Cell } from 'recharts';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import JSZip from 'jszip';
 import {
   initializeFirebase,
   createRoom,
@@ -461,20 +462,143 @@ const App: React.FC = () => {
     }
   };
 
-  // Batch PDF download
-  const handleBatchPDFDownload = async () => {
-    if (!roomParticipants.length) return;
+  // Generate single participant PDF as blob
+  const generateParticipantPDFBlob = async (participant: Participant): Promise<Blob> => {
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const result = participant.result;
+    const personaRule = PERSONA_RULES.find(r => result.totalScore >= r.min);
 
-    alert(`${roomParticipants.length}명의 결과를 개별 PDF로 다운로드합니다. 브라우저 설정에 따라 여러 파일이 다운로드될 수 있습니다.`);
+    // Add Korean font support (basic)
+    pdf.setFont('helvetica');
 
-    for (const participant of roomParticipants) {
-      // Create temporary result display
-      setSelectedParticipant(participant);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      await generateAndDownloadPDF(participant);
-      await new Promise(resolve => setTimeout(resolve, 300));
+    let y = 20;
+    const marginLeft = 20;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+
+    // Title
+    pdf.setFontSize(18);
+    pdf.text('KRQ-53 Resilience Report', pageWidth / 2, y, { align: 'center' });
+    y += 15;
+
+    // Participant Info
+    pdf.setFontSize(12);
+    pdf.text(`Name: ${participant.name}`, marginLeft, y);
+    y += 8;
+    pdf.text(`Team: ${participant.team || '-'}`, marginLeft, y);
+    y += 8;
+    pdf.text(`Date: ${new Date(participant.completedAt).toLocaleDateString()}`, marginLeft, y);
+    y += 15;
+
+    // Total Score Box
+    pdf.setFillColor(255, 222, 3);
+    pdf.rect(marginLeft, y, pageWidth - 40, 25, 'F');
+    pdf.setFontSize(14);
+    pdf.text(`Total Score: ${result.totalScore}`, marginLeft + 5, y + 10);
+    pdf.text(`Type: ${result.persona} ${personaRule?.emoji || ''}`, marginLeft + 5, y + 20);
+    y += 35;
+
+    // Category Scores
+    pdf.setFontSize(12);
+    pdf.text('Category Scores:', marginLeft, y);
+    y += 10;
+
+    const categories = [
+      { name: 'Self-Regulation', score: result.categoryScores[Category.SELF_REGULATION], avg: 63.5 },
+      { name: 'Interpersonal', score: result.categoryScores[Category.INTERPERSONAL], avg: 67.8 },
+      { name: 'Positivity', score: result.categoryScores[Category.POSITIVITY], avg: 63.4 },
+    ];
+
+    categories.forEach(cat => {
+      const diff = cat.score - cat.avg;
+      const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+      pdf.text(`  ${cat.name}: ${cat.score} (Korean Avg: ${cat.avg}, ${diffStr})`, marginLeft, y);
+      y += 8;
+    });
+    y += 10;
+
+    // Subcategory Scores
+    pdf.text('9 Factor Scores:', marginLeft, y);
+    y += 10;
+
+    const subCategories = [
+      { name: 'Emotion Control', key: SubCategory.EMOTION_CONTROL },
+      { name: 'Impulse Control', key: SubCategory.IMPULSE_CONTROL },
+      { name: 'Causal Analysis', key: SubCategory.CAUSAL_ANALYSIS },
+      { name: 'Communication', key: SubCategory.COMMUNICATION },
+      { name: 'Empathy', key: SubCategory.EMPATHY },
+      { name: 'Ego Expansion', key: SubCategory.EGO_EXPANSION },
+      { name: 'Self Optimism', key: SubCategory.SELF_OPTIMISM },
+      { name: 'Life Satisfaction', key: SubCategory.LIFE_SATISFACTION },
+      { name: 'Gratitude', key: SubCategory.GRATITUDE },
+    ];
+
+    subCategories.forEach(sub => {
+      const score = result.subCategoryScores[sub.key];
+      const maxScore = sub.key === SubCategory.LIFE_SATISFACTION ? 25 : 30;
+      const percentage = Math.round((score / maxScore) * 100);
+      pdf.text(`  ${sub.name}: ${score}/${maxScore} (${percentage}%)`, marginLeft, y);
+      y += 7;
+    });
+    y += 10;
+
+    // Strength Areas
+    if (result.strengthAreas && result.strengthAreas.length > 0) {
+      pdf.text('Strength Areas:', marginLeft, y);
+      y += 8;
+      result.strengthAreas.forEach((area, i) => {
+        pdf.text(`  ${i + 1}. ${area}`, marginLeft, y);
+        y += 7;
+      });
+      y += 5;
     }
-    setSelectedParticipant(null);
+
+    // Improvement Areas
+    if (result.improvementAreas && result.improvementAreas.length > 0) {
+      pdf.text('Improvement Areas:', marginLeft, y);
+      y += 8;
+      result.improvementAreas.forEach((area, i) => {
+        pdf.text(`  ${i + 1}. ${area}`, marginLeft, y);
+        y += 7;
+      });
+    }
+
+    // Footer
+    pdf.setFontSize(8);
+    pdf.text('KRQ-53 Resilience Assessment | JJ Creative', pageWidth / 2, 285, { align: 'center' });
+
+    return pdf.output('blob');
+  };
+
+  // Batch PDF download as ZIP
+  const handleBatchPDFDownload = async () => {
+    if (!roomParticipants.length || !selectedRoom) return;
+
+    setLoading(true);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder(`${selectedRoom.name}_결과`);
+
+      for (let i = 0; i < roomParticipants.length; i++) {
+        const participant = roomParticipants[i];
+        const pdfBlob = await generateParticipantPDFBlob(participant);
+        const fileName = `${participant.team || '미지정'}_${participant.name}_${participant.result.totalScore}점.pdf`;
+        folder?.file(fileName, pdfBlob);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${selectedRoom.name}_전체결과_${new Date().toLocaleDateString()}.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      alert(`${roomParticipants.length}명의 결과가 ZIP 파일로 다운로드되었습니다.`);
+    } catch (e) {
+      console.error('Batch PDF download error:', e);
+      alert('다운로드 중 오류가 발생했습니다.');
+    }
+    setLoading(false);
   };
 
   // CSV Export
