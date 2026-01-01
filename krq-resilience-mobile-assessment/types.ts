@@ -86,12 +86,15 @@ export interface Room {
   accessCode: string;
   isActive: boolean;
   participantCount: number;
+  teamCount: number;  // 팀 갯수
+  teams: string[];    // 팀 이름 목록 (예: ["1팀", "2팀", "3팀"])
 }
 
 export interface Participant {
   id: string;
   roomId: string;
   name: string;
+  team: string;       // 소속 팀
   email?: string;
   completedAt: string;
   result: EnhancedAssessmentResult;

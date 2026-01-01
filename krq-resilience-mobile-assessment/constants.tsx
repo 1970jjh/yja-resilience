@@ -69,10 +69,25 @@ export const QUESTIONS: Question[] = [
 ];
 
 export const PERSONA_RULES = [
-  { min: 200, name: "인재파 (Talent Group)", desc: "웬만한 불행한 사건은 당신을 흔들지 못합니다. 당신은 탁월한 회복탄력성으로 무장한 인재입니다!" },
-  { min: 180, name: "노력파 (Effort Group)", desc: "대한민국 평균 수준입니다. 조금만 더 노력해볼까요? 체계적인 훈련으로 더 큰 잠재력을 깨울 수 있습니다." },
-  { min: 0, name: "나약파 (Weak Group)", desc: "사소한 부정적 사건에 쉽게 영향을 받습니다. 마음 근육을 키우는 집중적인 관리가 필요합니다." }
+  { min: 201, name: "슈퍼 고무공", emoji: "🏀", color: "#A3E635", desc: "어떤 바닥에 부딪혀도 더 높이 튀어 오르는 무적의 탄성! 당신은 어떤 역경도 성장의 발판으로 만듭니다." },
+  { min: 181, name: "테니스공", emoji: "🎾", color: "#FFDE03", desc: "적당한 탄력을 가졌지만, 가끔 바람을 채워줄 관리(노력)가 필요합니다. 꾸준한 훈련으로 더 높이 튀어오를 수 있어요!" },
+  { min: 0, name: "마시멜로우", emoji: "🍡", color: "#FF5C00", desc: "말랑말랑하고 부드럽지만, 충격을 받으면 모양이 쉽게 변해 보살핌이 필요합니다. 천천히 마음 근육을 키워봐요!" }
 ];
+
+// 간단한 회복탄력성 설명
+export const RESILIENCE_INTRO = {
+  title: "회복탄력성이란?",
+  subtitle: "마음의 근육 측정하기",
+  description: "회복탄력성은 '마음의 근육'이에요! 넘어져도 다시 일어나는 힘, 힘든 일이 있어도 다시 웃을 수 있는 힘이죠.",
+  benefits: [
+    { icon: "💪", text: "스트레스를 건강하게 관리할 수 있어요" },
+    { icon: "🔥", text: "어려운 상황에서도 포기하지 않아요" },
+    { icon: "🚀", text: "실패해도 다시 도전하는 용기가 생겨요" },
+    { icon: "😊", text: "더 행복하고 건강한 삶을 살 수 있어요" }
+  ],
+  howItWorks: "53개의 간단한 질문에 솔직하게 답하면, 당신의 마음 근육 상태를 알려드려요!",
+  duration: "약 10-15분 소요"
+};
 
 // 하위 요인별 상세 피드백 데이터
 export const DETAILED_FEEDBACK_DATA: Record<SubCategory, { high: DetailedFeedback; medium: DetailedFeedback; low: DetailedFeedback }> = {
