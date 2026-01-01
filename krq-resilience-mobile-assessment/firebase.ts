@@ -8,6 +8,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -109,6 +110,30 @@ export const getRoomsByAdmin = async (adminId: string): Promise<Room[]> => {
 export const updateRoom = async (roomId: string, data: Partial<Room>) => {
   const { db } = initializeFirebase();
   await updateDoc(doc(db, 'rooms', roomId), data);
+};
+
+// 모든 활성 방 가져오기
+export const getAllActiveRooms = async (): Promise<Room[]> => {
+  const { db } = initializeFirebase();
+  const q = query(
+    collection(db, 'rooms'),
+    where('isActive', '==', true),
+    orderBy('createdAt', 'desc')
+  );
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
+};
+
+// 방 삭제 (비활성화)
+export const deleteRoom = async (roomId: string) => {
+  const { db } = initializeFirebase();
+  await updateDoc(doc(db, 'rooms', roomId), { isActive: false });
+};
+
+// 방 완전 삭제
+export const permanentlyDeleteRoom = async (roomId: string) => {
+  const { db } = initializeFirebase();
+  await deleteDoc(doc(db, 'rooms', roomId));
 };
 
 // 참가자(Participant) 관련 함수

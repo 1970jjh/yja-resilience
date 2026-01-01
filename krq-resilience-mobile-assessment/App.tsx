@@ -1,29 +1,27 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { QUESTIONS, PERSONA_RULES, DETAILED_FEEDBACK_DATA, OVERALL_INTERPRETATIONS } from './constants';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { QUESTIONS, PERSONA_RULES, DETAILED_FEEDBACK_DATA, OVERALL_INTERPRETATIONS, RESILIENCE_INTRO } from './constants';
 import { Category, SubCategory, EnhancedAssessmentResult, SubCategoryAnalysis, Room, Participant, RoomStats } from './types';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from 'recharts';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
   initializeFirebase,
-  loginAdmin,
-  logoutAdmin,
-  onAuthChange,
   createRoom,
   getRoom,
-  getRoomByAccessCode,
-  getRoomsByAdmin,
+  getAllActiveRooms,
+  deleteRoom,
   updateRoom,
   saveParticipantResult,
   getParticipantsByRoom,
   calculateRoomStats,
   generateAccessCode
 } from './firebase';
-import type { User } from 'firebase/auth';
+
+// --- Constants ---
+const ADMIN_PASSWORD = "6749467";
 
 // --- Utility Components ---
-
 const Button: React.FC<{
   onClick?: () => void;
   children: React.ReactNode;
@@ -68,88 +66,95 @@ const Input: React.FC<{
   />
 );
 
-// --- Main App ---
+const Select: React.FC<{
+  value: string;
+  onChange: (val: string) => void;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+  className?: string;
+}> = ({ value, onChange, options, placeholder, className = '' }) => (
+  <select
+    value={value}
+    onChange={(e) => onChange(e.target.value)}
+    className={`w-full p-3 brutal-border bg-white font-bold focus:outline-none focus:ring-2 focus:ring-black ${className}`}
+  >
+    {placeholder && <option value="">{placeholder}</option>}
+    {options.map(opt => (
+      <option key={opt.value} value={opt.value}>{opt.label}</option>
+    ))}
+  </select>
+);
 
-type AppStep = 'landing' | 'join-room' | 'intro' | 'user-info' | 'test' | 'result' | 'admin-login' | 'admin-dashboard';
+// --- Main App ---
+type AppStep = 'landing' | 'participant-info' | 'test' | 'result' | 'admin-login' | 'admin-dashboard';
 
 const App: React.FC = () => {
+  // State
   const [step, setStep] = useState<AppStep>('landing');
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [currentIdx, setCurrentIdx] = useState(0);
+  const [activeRooms, setActiveRooms] = useState<Room[]>([]);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
-  const [roomCode, setRoomCode] = useState('');
   const [userName, setUserName] = useState('');
-  const [userEmail, setUserEmail] = useState('');
-  const [adminUser, setAdminUser] = useState<User | null>(null);
-  const [adminEmail, setAdminEmail] = useState('');
+  const [userTeam, setUserTeam] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Admin state
+  const [isAdmin, setIsAdmin] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
-  const [adminRooms, setAdminRooms] = useState<Room[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [roomParticipants, setRoomParticipants] = useState<Participant[]>([]);
   const [roomStats, setRoomStats] = useState<RoomStats | null>(null);
   const [newRoomName, setNewRoomName] = useState('');
-  const [newRoomDesc, setNewRoomDesc] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [newRoomTeamCount, setNewRoomTeamCount] = useState('3');
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  const [viewMode, setViewMode] = useState<'all' | 'team'>('all');
+  const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('');
   const [savedResult, setSavedResult] = useState<EnhancedAssessmentResult | null>(null);
 
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // Initialize Firebase and load rooms
   useEffect(() => {
     try {
       initializeFirebase();
-      const unsubscribe = onAuthChange((user) => {
-        setAdminUser(user);
-        if (user) {
-          loadAdminRooms(user.uid);
-        }
-      });
-      return () => unsubscribe();
+      loadActiveRooms();
     } catch (e) {
       console.log('Firebase not configured yet');
     }
   }, []);
 
-  const loadAdminRooms = async (uid: string) => {
+  const loadActiveRooms = async () => {
     try {
-      const rooms = await getRoomsByAdmin(uid);
-      setAdminRooms(rooms);
+      const rooms = await getAllActiveRooms();
+      setActiveRooms(rooms);
     } catch (e) {
       console.error('Failed to load rooms:', e);
     }
   };
 
-  const handleJoinRoom = async () => {
-    if (!roomCode.trim()) {
-      setError('접속 코드를 입력해주세요.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const room = await getRoomByAccessCode(roomCode.toUpperCase());
-      if (room) {
-        setCurrentRoom(room);
-        setStep('intro');
-      } else {
-        setError('유효하지 않은 접속 코드입니다.');
-      }
-    } catch (e) {
-      setError('오류가 발생했습니다. 다시 시도해주세요.');
-    }
-    setLoading(false);
+  // Handlers
+  const handleSelectCourse = (room: Room) => {
+    setCurrentRoom(room);
+    setUserTeam('');
+    setUserName('');
+    setStep('participant-info');
   };
 
   const handleStartTest = () => {
-    setStep('user-info');
-  };
-
-  const handleUserInfoSubmit = () => {
     if (!userName.trim()) {
       setError('이름을 입력해주세요.');
       return;
     }
+    if (!userTeam) {
+      setError('팀을 선택해주세요.');
+      return;
+    }
     setError('');
+    setAnswers({});
+    setCurrentIdx(0);
     setStep('test');
   };
 
@@ -162,6 +167,81 @@ const App: React.FC = () => {
     }
   };
 
+  const handleAdminLogin = () => {
+    if (adminPassword === ADMIN_PASSWORD) {
+      setIsAdmin(true);
+      setStep('admin-dashboard');
+      setError('');
+      loadActiveRooms();
+    } else {
+      setError('비밀번호가 틀렸습니다.');
+    }
+  };
+
+  const handleCreateRoom = async () => {
+    if (!newRoomName.trim()) {
+      setError('과정명을 입력해주세요.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const teamCount = parseInt(newRoomTeamCount) || 3;
+      const teams = Array.from({ length: teamCount }, (_, i) => `${i + 1}팀`);
+      const accessCode = generateAccessCode();
+
+      await createRoom({
+        name: newRoomName,
+        description: `${teamCount}개 팀`,
+        createdBy: 'admin',
+        accessCode,
+        isActive: true,
+        teamCount,
+        teams
+      });
+
+      await loadActiveRooms();
+      setNewRoomName('');
+      setNewRoomTeamCount('3');
+      setShowCreateRoom(false);
+      setError('');
+    } catch (e) {
+      setError('과정 생성 실패');
+    }
+    setLoading(false);
+  };
+
+  const handleDeleteRoom = async (roomId: string) => {
+    if (!confirm('정말로 이 과정을 삭제하시겠습니까?')) return;
+    setLoading(true);
+    try {
+      await deleteRoom(roomId);
+      await loadActiveRooms();
+      if (selectedRoom?.id === roomId) {
+        setSelectedRoom(null);
+        setRoomParticipants([]);
+        setRoomStats(null);
+      }
+    } catch (e) {
+      console.error('Failed to delete room:', e);
+    }
+    setLoading(false);
+  };
+
+  const handleSelectRoom = async (room: Room) => {
+    setSelectedRoom(room);
+    setSelectedParticipant(null);
+    setLoading(true);
+    try {
+      const participants = await getParticipantsByRoom(room.id);
+      setRoomParticipants(participants);
+      setRoomStats(calculateRoomStats(participants));
+    } catch (e) {
+      console.error('Failed to load participants:', e);
+    }
+    setLoading(false);
+  };
+
+  // Calculate results
   const getSubCategoryLevel = (score: number, maxScore: number): '매우 높음' | '높음' | '보통' | '낮음' | '매우 낮음' => {
     const percentage = (score / maxScore) * 100;
     if (percentage >= 80) return '매우 높음';
@@ -199,18 +279,15 @@ const App: React.FC = () => {
     let totalRaw = 0;
     QUESTIONS.forEach(q => {
       let val = answers[q.id] || 3;
-      if (q.isReverse) {
-        val = 6 - val;
-      }
+      if (q.isReverse) val = 6 - val;
       catScores[q.category] += val;
       subScores[q.subCategory] += val;
       totalRaw += val;
     });
 
     const personaRule = PERSONA_RULES.find(r => totalRaw >= r.min);
-    const persona = personaRule?.name || "집중 관리";
+    const persona = personaRule?.name || "마시멜로우";
 
-    // 하위 요인별 상세 분석 생성
     const subCategoryAnalysis: SubCategoryAnalysis[] = Object.values(SubCategory).map(sub => {
       const score = subScores[sub];
       const maxScore = sub === SubCategory.LIFE_SATISFACTION ? 25 : 30;
@@ -230,17 +307,14 @@ const App: React.FC = () => {
       };
     });
 
-    // 강점/약점 영역 식별
     const sortedSubs = [...subCategoryAnalysis].sort((a, b) => b.percentage - a.percentage);
     const strengthAreas = sortedSubs.slice(0, 3).map(s => s.subCategory);
     const improvementAreas = sortedSubs.slice(-3).reverse().map(s => s.subCategory);
 
-    // 전체 해석
     let overallLevel: 'high' | 'medium' | 'low' = 'medium';
-    if (totalRaw >= 200) overallLevel = 'high';
-    else if (totalRaw < 180) overallLevel = 'low';
+    if (totalRaw >= 201) overallLevel = 'high';
+    else if (totalRaw < 181) overallLevel = 'low';
 
-    // 개인 성장 계획
     const personalGrowthPlan = {
       immediate: improvementAreas.slice(0, 2).map(area => {
         const analysis = subCategoryAnalysis.find(s => s.subCategory === area);
@@ -257,7 +331,6 @@ const App: React.FC = () => {
       ]
     };
 
-    // 기존 피드백 생성
     const generateAnalysis = () => {
       const sr = catScores[Category.SELF_REGULATION];
       const is = catScores[Category.INTERPERSONAL];
@@ -266,31 +339,31 @@ const App: React.FC = () => {
       let strengths = "";
       const improvements: { title: string; content: string; mission: string; }[] = [];
 
-      if (sr >= 70) strengths += `[자기조절능력] 당신은 감정 조절이 우수합니다. 특히 ${subScores[SubCategory.EMOTION_CONTROL] >= 25 ? '정서적 통제력' : '문제 분석력'}이 뛰어나 위기에서도 흔들리지 않습니다. `;
-      if (is >= 74) strengths += `[대인관계] 타인의 감정을 읽는 공감능력과 명확한 소통능력이 조화로워 주변의 신뢰를 한몸에 받습니다. `;
-      if (po >= 70) strengths += `[긍정성] 삶에 대한 낙관과 감사하는 태도는 당신이 역경을 도약의 기회로 바꾸는 핵심 동력입니다. `;
+      if (sr >= 70) strengths += `[자기조절능력] 당신은 감정 조절이 우수합니다. `;
+      if (is >= 74) strengths += `[대인관계] 타인의 감정을 읽는 공감능력이 뛰어납니다. `;
+      if (po >= 70) strengths += `[긍정성] 삶에 대한 낙관과 감사하는 태도가 훌륭합니다. `;
 
-      if (!strengths) strengths = "마음 근력을 본격적으로 단련해야 하는 시기입니다. 본인의 잠재력을 믿고 아래 가이드를 하나씩 실천해보세요.";
+      if (!strengths) strengths = "마음 근력을 본격적으로 단련해야 하는 시기입니다.";
 
       if (sr < 70) {
         improvements.push({
           title: "자기조절능력 솔루션",
-          content: `자기조절 점수(${sr}점)는 평균 근처입니다. ${subScores[SubCategory.IMPULSE_CONTROL] < 20 ? '충동 억제력' : '사건의 원인을 객관적으로 규명하는 힘'}을 키우는 훈련이 필요합니다.`,
-          mission: "감정 일기를 쓰세요. 불쾌한 상황에서 '지금 내 감정은 무엇인가?'라고 3번 묻고 상황을 객관화하는 ABCDE 훈련을 추천합니다."
+          content: `자기조절 점수(${sr}점)를 높이는 훈련이 필요합니다.`,
+          mission: "감정 일기를 쓰세요."
         });
       }
       if (is < 74) {
         improvements.push({
           title: "대인관계능력 솔루션",
-          content: `대인관계 점수(${is}점) 보완을 위해 ${subScores[SubCategory.COMMUNICATION] < 20 ? '자신의 의사를 유연하게 전달하는 법' : '상대방의 감정에 깊이 공감하는 법'}에 집중해보세요.`,
-          mission: "'나 전달법'을 사용해보세요. 하루 1번, 상대의 말을 그대로 요약해서 되묻는 '백트래킹' 기법 연습을 추천합니다."
+          content: `대인관계 점수(${is}점) 보완이 필요합니다.`,
+          mission: "'나 전달법'을 사용해보세요."
         });
       }
       if (po < 70) {
         improvements.push({
           title: "긍정성 솔루션",
-          content: `긍정성 점수(${po}점)를 높이려면 ${subScores[SubCategory.GRATITUDE] < 20 ? '일상의 소중함 발견' : '자신에 대한 긍정적 확신'}이 필요합니다.`,
-          mission: "매일 밤 '세 가지 감사 일기'를 적으세요. 뇌의 긍정 회로를 재설계하여 스트레스에 강한 마음을 만들어줍니다."
+          content: `긍정성 점수(${po}점)를 높여보세요.`,
+          mission: "매일 밤 '세 가지 감사 일기'를 적으세요."
         });
       }
 
@@ -304,7 +377,7 @@ const App: React.FC = () => {
       persona,
       feedback: generateAnalysis(),
       participantName: userName,
-      participantEmail: userEmail,
+      participantEmail: '',
       completedAt: new Date().toISOString(),
       roomId: currentRoom?.id || 'direct',
       subCategoryAnalysis,
@@ -313,8 +386,9 @@ const App: React.FC = () => {
       strengthAreas,
       improvementAreas
     };
-  }, [answers, userName, userEmail, currentRoom]);
+  }, [answers, userName, currentRoom]);
 
+  // Save and download
   const handleSaveResult = async () => {
     setLoading(true);
     try {
@@ -322,40 +396,14 @@ const App: React.FC = () => {
         await saveParticipantResult(currentRoom.id, {
           roomId: currentRoom.id,
           name: userName,
-          email: userEmail,
+          team: userTeam,
           completedAt: new Date().toISOString(),
           result: calculateResults
         });
       }
       setSavedResult(calculateResults);
-
-      // PDF 생성
-      const element = document.getElementById('result-content');
-      if (element) {
-        const canvas = await html2canvas(element, { scale: 2 });
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-        let heightLeft = pdfHeight;
-        let position = 0;
-
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-        heightLeft -= pdf.internal.pageSize.getHeight();
-
-        while (heightLeft >= 0) {
-          position = heightLeft - pdfHeight;
-          pdf.addPage();
-          pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-          heightLeft -= pdf.internal.pageSize.getHeight();
-        }
-
-        pdf.save(`KRQ_회복탄력성_${userName}_${new Date().toLocaleDateString()}.pdf`);
-      }
-
-      window.open("https://drive.google.com/drive/folders/1SEGYJuN-s2mMcjTRGTWiZ2kAtTWqFEhS?usp=sharing", "_blank");
-      alert("결과가 저장되었습니다! 드라이브 폴더에 PDF를 업로드해주세요.");
+      await generateAndDownloadPDF();
+      alert("결과가 저장되었습니다!");
     } catch (e) {
       console.error('Save error:', e);
       alert('저장 중 오류가 발생했습니다.');
@@ -363,67 +411,61 @@ const App: React.FC = () => {
     setLoading(false);
   };
 
-  // Admin functions
-  const handleAdminLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    try {
-      await loginAdmin(adminEmail, adminPassword);
-      setStep('admin-dashboard');
-    } catch (e: any) {
-      setError('로그인 실패: ' + e.message);
-    }
-    setLoading(false);
-  };
+  const generateAndDownloadPDF = async (participant?: Participant) => {
+    const element = document.getElementById('result-content');
+    if (!element) return;
 
-  const handleCreateRoom = async () => {
-    if (!newRoomName.trim()) {
-      setError('방 이름을 입력해주세요.');
-      return;
-    }
-    setLoading(true);
     try {
-      const accessCode = generateAccessCode();
-      await createRoom({
-        name: newRoomName,
-        description: newRoomDesc,
-        createdBy: adminUser!.uid,
-        accessCode,
-        isActive: true
-      });
-      await loadAdminRooms(adminUser!.uid);
-      setNewRoomName('');
-      setNewRoomDesc('');
-      setShowCreateRoom(false);
-      setError('');
+      const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      let heightLeft = pdfHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pdf.internal.pageSize.getHeight();
+
+      while (heightLeft >= 0) {
+        position = heightLeft - pdfHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pdf.internal.pageSize.getHeight();
+      }
+
+      const name = participant?.name || userName;
+      pdf.save(`KRQ_회복탄력성_${name}_${new Date().toLocaleDateString()}.pdf`);
     } catch (e) {
-      setError('방 생성 실패');
+      console.error('PDF generation error:', e);
     }
-    setLoading(false);
   };
 
-  const handleSelectRoom = async (room: Room) => {
-    setSelectedRoom(room);
-    setLoading(true);
-    try {
-      const participants = await getParticipantsByRoom(room.id);
-      setRoomParticipants(participants);
-      setRoomStats(calculateRoomStats(participants));
-    } catch (e) {
-      console.error('Failed to load participants:', e);
+  // Batch PDF download
+  const handleBatchPDFDownload = async () => {
+    if (!roomParticipants.length) return;
+
+    alert(`${roomParticipants.length}명의 결과를 개별 PDF로 다운로드합니다. 브라우저 설정에 따라 여러 파일이 다운로드될 수 있습니다.`);
+
+    for (const participant of roomParticipants) {
+      // Create temporary result display
+      setSelectedParticipant(participant);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await generateAndDownloadPDF(participant);
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
-    setLoading(false);
+    setSelectedParticipant(null);
   };
 
-  const handleExportRoomData = async () => {
+  // CSV Export
+  const handleExportCSV = async () => {
     if (!selectedRoom || !roomParticipants.length) return;
 
-    // CSV 생성
-    const headers = ['이름', '이메일', '총점', '페르소나', '자기조절', '대인관계', '긍정성', '완료일시'];
+    const headers = ['이름', '팀', '총점', '페르소나', '자기조절', '대인관계', '긍정성', '완료일시'];
     const rows = roomParticipants.map(p => [
       p.name,
-      p.email || '',
+      p.team || '-',
       p.result.totalScore,
       p.result.persona,
       p.result.categoryScores[Category.SELF_REGULATION],
@@ -441,99 +483,133 @@ const App: React.FC = () => {
     link.click();
   };
 
+  // Group participants by team
+  const getParticipantsByTeam = () => {
+    const teamGroups: Record<string, Participant[]> = {};
+    roomParticipants.forEach(p => {
+      const team = p.team || '미지정';
+      if (!teamGroups[team]) teamGroups[team] = [];
+      teamGroups[team].push(p);
+    });
+    return teamGroups;
+  };
+
   // Render functions
   const renderLanding = () => (
-    <div className="min-h-screen flex flex-col p-6 items-center justify-center text-center bg-gradient-to-br from-[#FFDE03] to-[#A3E635]">
-      <h1 className="text-4xl md:text-6xl font-brutal mb-8 leading-tight">
-        RESILIENCE<br /><span className="bg-black text-[#A3E635] px-2">KRQ-53</span>
-      </h1>
-      <Card className="max-w-md w-full">
-        <p className="text-lg mb-8 font-bold">회복탄력성 진단 검사</p>
-        <div className="space-y-4">
-          <Button onClick={() => setStep('join-room')} className="w-full bg-[#A3E635]">
-            검사 참여하기
-          </Button>
-          <Button onClick={() => setStep('admin-login')} variant="secondary" className="w-full">
-            관리자 로그인
-          </Button>
+    <div className="min-h-screen p-4 md:p-6 bg-gradient-to-br from-[#FFDE03] to-[#A3E635]">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-4xl md:text-5xl font-brutal mb-4 leading-tight">
+            RESILIENCE<br /><span className="bg-black text-[#A3E635] px-3 py-1">KRQ-53</span>
+          </h1>
         </div>
-      </Card>
-      <p className="text-xs uppercase font-bold mt-4 tracking-widest opacity-70">JJ Creative</p>
-    </div>
-  );
 
-  const renderJoinRoom = () => (
-    <div className="min-h-screen flex flex-col p-6 items-center justify-center text-center">
-      <Card className="max-w-md w-full">
-        <h2 className="text-2xl font-brutal mb-6">검사 참여</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-left font-bold mb-2">접속 코드</label>
-            <Input
-              value={roomCode}
-              onChange={setRoomCode}
-              placeholder="6자리 코드 입력"
-              className="text-center text-2xl tracking-widest uppercase"
-            />
+        {/* Resilience Intro Card */}
+        <Card className="mb-8 border-4">
+          <div className="text-center mb-4">
+            <h2 className="text-2xl font-brutal mb-2">{RESILIENCE_INTRO.title}</h2>
+            <p className="text-lg font-bold text-gray-700">{RESILIENCE_INTRO.subtitle}</p>
           </div>
-          {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-          <Button onClick={handleJoinRoom} disabled={loading} className="w-full bg-[#A3E635]">
-            {loading ? '확인 중...' : '참여하기'}
-          </Button>
-          <Button onClick={() => { setStep('intro'); setCurrentRoom(null); }} variant="secondary" className="w-full">
-            코드 없이 개인 검사하기
-          </Button>
-          <button onClick={() => setStep('landing')} className="text-sm underline opacity-70">
-            돌아가기
-          </button>
+          <p className="text-center mb-6 leading-relaxed">{RESILIENCE_INTRO.description}</p>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {RESILIENCE_INTRO.benefits.map((benefit, i) => (
+              <div key={i} className="bg-gray-50 p-3 brutal-border text-center">
+                <div className="text-2xl mb-1">{benefit.icon}</div>
+                <div className="text-xs font-bold">{benefit.text}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-[#A3E635] p-3 brutal-border text-center">
+            <p className="text-sm font-bold">{RESILIENCE_INTRO.howItWorks}</p>
+            <p className="text-xs mt-1 opacity-70">{RESILIENCE_INTRO.duration}</p>
+          </div>
+        </Card>
+
+        {/* Active Courses */}
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-brutal">진행 중인 과정</h2>
+            <button
+              onClick={() => setStep('admin-login')}
+              className="text-sm font-bold underline opacity-70 hover:opacity-100"
+            >
+              과정 생성
+            </button>
+          </div>
+
+          {activeRooms.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {activeRooms.map(room => (
+                <Card
+                  key={room.id}
+                  className="cursor-pointer hover:bg-[#A3E635] transition-colors border-4"
+                  onClick={() => handleSelectCourse(room)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="font-brutal text-lg">{room.name}</h3>
+                      <p className="text-sm opacity-70">{room.teamCount || 0}개 팀</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="bg-black text-white px-2 py-1 text-xs font-brutal">
+                        {room.participantCount || 0}명 참여
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card className="text-center py-12 border-4">
+              <p className="text-lg opacity-50 mb-4">현재 진행 중인 과정이 없습니다</p>
+              <p className="text-sm opacity-40">관리자가 과정을 생성하면 여기에 표시됩니다</p>
+            </Card>
+          )}
         </div>
-      </Card>
+
+        <p className="text-xs uppercase font-bold text-center tracking-widest opacity-50 mt-8">
+          JJ Creative - 회복탄력성 진단 솔루션
+        </p>
+      </div>
     </div>
   );
 
-  const renderIntro = () => (
-    <div className="min-h-screen flex flex-col p-6 items-center justify-center text-center">
-      <h1 className="text-4xl md:text-5xl font-brutal mb-6 leading-tight">
-        RESILIENCE<br /><span className="bg-black text-[#A3E635] px-2">KRQ-53 CHECK</span>
-      </h1>
-      {currentRoom && (
-        <div className="bg-[#00D1FF] brutal-border p-3 mb-4 font-bold">
-          {currentRoom.name}
-        </div>
-      )}
-      <Card className="max-w-md">
-        <p className="text-lg mb-6 leading-relaxed font-bold">
-          안녕하세요! 당신의 단단한 마음 근력, <br />
-          <span className="bg-[#FFDE03] px-1">'회복탄력성'</span>은 어느 정도일까요?
-        </p>
-        <p className="text-sm mb-8 leading-relaxed opacity-80">
-          53개의 문항을 통해 9가지 지표로 정밀 분석합니다. <br />
-          나의 강점을 발견하고 더 나은 내일을 준비하세요.
-        </p>
-        <Button onClick={handleStartTest} className="w-full text-xl py-4 bg-[#A3E635]">
-          나의 마음 근력 확인하기
-        </Button>
-      </Card>
-    </div>
-  );
-
-  const renderUserInfo = () => (
+  const renderParticipantInfo = () => (
     <div className="min-h-screen flex flex-col p-6 items-center justify-center">
-      <Card className="max-w-md w-full">
+      <Card className="max-w-md w-full border-4">
+        {currentRoom && (
+          <div className="bg-[#00D1FF] brutal-border p-3 mb-4 text-center font-bold">
+            {currentRoom.name}
+          </div>
+        )}
         <h2 className="text-2xl font-brutal mb-6 text-center">참가자 정보</h2>
         <div className="space-y-4">
+          <div>
+            <label className="block font-bold mb-2">팀 선택 *</label>
+            <Select
+              value={userTeam}
+              onChange={setUserTeam}
+              options={(currentRoom?.teams || []).map(t => ({ value: t, label: t }))}
+              placeholder="팀을 선택하세요"
+            />
+          </div>
           <div>
             <label className="block font-bold mb-2">이름 *</label>
             <Input value={userName} onChange={setUserName} placeholder="이름을 입력하세요" />
           </div>
-          <div>
-            <label className="block font-bold mb-2">이메일 (선택)</label>
-            <Input value={userEmail} onChange={setUserEmail} placeholder="email@example.com" type="email" />
-          </div>
           {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-          <Button onClick={handleUserInfoSubmit} className="w-full bg-[#A3E635]">
+          <Button onClick={handleStartTest} className="w-full bg-[#A3E635]">
             검사 시작하기
           </Button>
+          <button
+            onClick={() => { setStep('landing'); setCurrentRoom(null); }}
+            className="w-full text-sm underline opacity-70"
+          >
+            돌아가기
+          </button>
         </div>
       </Card>
     </div>
@@ -579,6 +655,7 @@ const App: React.FC = () => {
 
   const renderResult = () => {
     const result = calculateResults;
+    const personaRule = PERSONA_RULES.find(r => result.totalScore >= r.min);
     const categoryMapping = {
       [Category.SELF_REGULATION]: [SubCategory.EMOTION_CONTROL, SubCategory.IMPULSE_CONTROL, SubCategory.CAUSAL_ANALYSIS],
       [Category.INTERPERSONAL]: [SubCategory.COMMUNICATION, SubCategory.EMPATHY, SubCategory.EGO_EXPANSION],
@@ -598,38 +675,41 @@ const App: React.FC = () => {
 
     return (
       <div className="min-h-screen p-4 pb-40 max-w-4xl mx-auto">
-        <div id="result-content" className="bg-[#FFDE03] p-4 md:p-6 border-4 border-black">
-          {/* 헤더 */}
+        <div id="result-content" ref={resultRef} className="bg-[#FFDE03] p-4 md:p-6 border-4 border-black">
+          {/* Header */}
           <h1 className="text-2xl md:text-3xl font-brutal mb-4 text-center uppercase border-b-4 border-black pb-2">
             회복탄력성 심층 분석 리포트
           </h1>
-          <p className="text-center font-bold mb-4">{result.participantName}님의 결과 | {new Date().toLocaleDateString()}</p>
+          <p className="text-center font-bold mb-4">
+            {currentRoom?.name} | {userTeam} | {result.participantName}님 | {new Date().toLocaleDateString()}
+          </p>
 
-          {/* 총점 및 페르소나 */}
+          {/* Persona & Total Score */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <Card className="text-center border-4">
+            <Card className="text-center border-4" style={{ backgroundColor: personaRule?.color }}>
               <p className="text-xs font-bold uppercase mb-1">당신의 유형</p>
-              <h2 className="text-2xl font-brutal text-[#FF5C00] mb-2">{result.persona}</h2>
-              <p className="text-xs font-bold">{PERSONA_RULES.find(p => p.name === result.persona)?.desc}</p>
+              <div className="text-4xl mb-2">{personaRule?.emoji}</div>
+              <h2 className="text-2xl font-brutal mb-2">{result.persona}</h2>
+              <p className="text-xs font-bold">{personaRule?.desc}</p>
             </Card>
             <Card className="text-center border-4">
               <p className="text-xs font-bold uppercase mb-1">총점</p>
               <div className="text-5xl font-brutal mb-2">{result.totalScore}</div>
               <div className="text-[9px] space-y-1 font-bold">
-                <p className={result.totalScore >= 200 ? 'bg-black text-white px-1' : 'opacity-60'}>200점 이상: 탁월한 회복탄력성</p>
-                <p className={result.totalScore >= 180 && result.totalScore < 200 ? 'bg-black text-white px-1' : 'opacity-60'}>180-199점: 평균 수준</p>
-                <p className={result.totalScore < 180 ? 'bg-black text-white px-1' : 'opacity-60'}>180점 미만: 집중 관리 필요</p>
+                <p className={result.totalScore >= 201 ? 'bg-black text-white px-1' : 'opacity-60'}>201점 이상: 슈퍼 고무공</p>
+                <p className={result.totalScore >= 181 && result.totalScore <= 200 ? 'bg-black text-white px-1' : 'opacity-60'}>181-200점: 테니스공</p>
+                <p className={result.totalScore <= 180 ? 'bg-black text-white px-1' : 'opacity-60'}>180점 이하: 마시멜로우</p>
               </div>
             </Card>
           </div>
 
-          {/* 전체 해석 */}
+          {/* Overall Interpretation */}
           <Card className="border-4 bg-white mb-6">
             <h3 className="font-brutal text-lg mb-3 border-b-2 border-black pb-1">종합 해석</h3>
             <p className="text-sm leading-relaxed font-medium">{result.overallInterpretation}</p>
           </Card>
 
-          {/* 레이더 차트 */}
+          {/* Radar Chart */}
           <Card className="p-0 overflow-hidden border-4 mb-6">
             <div className="bg-black text-white p-3 font-brutal text-center uppercase text-xs">9가지 회복탄력성 요인 분석</div>
             <div className="h-72 w-full bg-white">
@@ -643,15 +723,13 @@ const App: React.FC = () => {
             </div>
           </Card>
 
-          {/* 강점/약점 요약 */}
+          {/* Strengths & Improvements */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <Card className="border-4 bg-[#A3E635]">
               <h3 className="font-brutal text-sm mb-2">나의 강점 TOP 3</h3>
               <ul className="text-sm space-y-1">
                 {result.strengthAreas.map((area, i) => (
-                  <li key={area} className="font-bold">
-                    {i + 1}. {area}
-                  </li>
+                  <li key={area} className="font-bold">{i + 1}. {area}</li>
                 ))}
               </ul>
             </Card>
@@ -659,15 +737,13 @@ const App: React.FC = () => {
               <h3 className="font-brutal text-sm mb-2">성장 필요 영역 TOP 3</h3>
               <ul className="text-sm space-y-1">
                 {result.improvementAreas.map((area, i) => (
-                  <li key={area} className="font-bold">
-                    {i + 1}. {area}
-                  </li>
+                  <li key={area} className="font-bold">{i + 1}. {area}</li>
                 ))}
               </ul>
             </Card>
           </div>
 
-          {/* 카테고리별 상세 */}
+          {/* Category Scores */}
           <Card className="border-4 bg-white mb-6">
             <h3 className="font-brutal text-sm mb-4 border-b-2 border-black pb-1 uppercase">영역별 상세 점수</h3>
             <div className="space-y-6">
@@ -699,7 +775,7 @@ const App: React.FC = () => {
             </div>
           </Card>
 
-          {/* 하위 요인별 상세 피드백 */}
+          {/* Detailed Feedback */}
           <h3 className="font-brutal text-lg mb-4 uppercase bg-black text-white p-2 text-center">9가지 요인 맞춤 분석 및 성장 가이드</h3>
 
           {result.subCategoryAnalysis.map((analysis, idx) => (
@@ -757,10 +833,9 @@ const App: React.FC = () => {
             </Card>
           ))}
 
-          {/* 성장 계획 */}
+          {/* Growth Plan */}
           <Card className="border-4 bg-[#00D1FF]">
             <h3 className="font-brutal text-lg mb-4 text-center">나만의 성장 로드맵</h3>
-
             <div className="space-y-4">
               <div className="bg-white p-3 brutal-border">
                 <h4 className="font-brutal text-sm mb-2">즉시 실천 (이번 주)</h4>
@@ -773,7 +848,6 @@ const App: React.FC = () => {
                   ))}
                 </ul>
               </div>
-
               <div className="bg-white p-3 brutal-border">
                 <h4 className="font-brutal text-sm mb-2">단기 목표 (1개월)</h4>
                 <ul className="text-xs space-y-1">
@@ -785,7 +859,6 @@ const App: React.FC = () => {
                   ))}
                 </ul>
               </div>
-
               <div className="bg-white p-3 brutal-border">
                 <h4 className="font-brutal text-sm mb-2">장기 목표 (3개월+)</h4>
                 <ul className="text-xs space-y-1">
@@ -805,15 +878,14 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* 하단 버튼 */}
+        {/* Bottom Buttons */}
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-[#FFDE03] border-t-4 border-black z-50">
           <div className="flex gap-2 w-full max-w-4xl mx-auto">
             <Button onClick={handleSaveResult} disabled={loading} className="flex-1 bg-white flex flex-col items-center py-2">
-              <span className="text-lg">{loading ? '저장 중...' : '결과 저장 및 제출'}</span>
-              <span className="text-[10px] opacity-60 font-sans font-normal">(PDF 저장 + 드라이브 업로드)</span>
+              <span className="text-lg">{loading ? '저장 중...' : '결과 저장 및 PDF 다운로드'}</span>
             </Button>
             <Button onClick={() => window.location.reload()} variant="danger" className="flex-none px-4">
-              다시 하기
+              처음으로
             </Button>
           </div>
         </div>
@@ -823,225 +895,301 @@ const App: React.FC = () => {
 
   const renderAdminLogin = () => (
     <div className="min-h-screen flex flex-col p-6 items-center justify-center">
-      <Card className="max-w-md w-full">
-        <h2 className="text-2xl font-brutal mb-6 text-center">관리자 로그인</h2>
-        <form onSubmit={handleAdminLogin} className="space-y-4">
-          <div>
-            <label className="block font-bold mb-2">이메일</label>
-            <Input value={adminEmail} onChange={setAdminEmail} type="email" placeholder="admin@example.com" />
-          </div>
+      <Card className="max-w-md w-full border-4">
+        <h2 className="text-2xl font-brutal mb-6 text-center">관리자 접근</h2>
+        <div className="space-y-4">
           <div>
             <label className="block font-bold mb-2">비밀번호</label>
-            <Input value={adminPassword} onChange={setAdminPassword} type="password" placeholder="비밀번호" />
+            <Input
+              value={adminPassword}
+              onChange={setAdminPassword}
+              type="password"
+              placeholder="비밀번호 입력"
+            />
           </div>
           {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-          <Button type="submit" disabled={loading} className="w-full bg-[#A3E635]">
-            {loading ? '로그인 중...' : '로그인'}
+          <Button onClick={handleAdminLogin} className="w-full bg-[#A3E635]">
+            접속
           </Button>
-          <button type="button" onClick={() => setStep('landing')} className="w-full text-sm underline opacity-70">
+          <button
+            onClick={() => { setStep('landing'); setError(''); setAdminPassword(''); }}
+            className="w-full text-sm underline opacity-70"
+          >
             돌아가기
           </button>
-        </form>
+        </div>
       </Card>
     </div>
   );
 
-  const renderAdminDashboard = () => (
-    <div className="min-h-screen p-4 md:p-6">
-      <div className="max-w-6xl mx-auto">
-        {/* 헤더 */}
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-brutal">관리자 대시보드</h1>
-          <div className="flex gap-2">
-            <span className="text-sm opacity-70">{adminUser?.email}</span>
-            <button onClick={() => { logoutAdmin(); setStep('landing'); }} className="text-sm underline text-red-500">
-              로그아웃
+  const renderAdminDashboard = () => {
+    const teamGroups = getParticipantsByTeam();
+    const filteredParticipants = selectedTeamFilter
+      ? roomParticipants.filter(p => (p.team || '미지정') === selectedTeamFilter)
+      : roomParticipants;
+
+    return (
+      <div className="min-h-screen p-4 md:p-6">
+        <div className="max-w-6xl mx-auto">
+          {/* Header */}
+          <div className="flex justify-between items-center mb-6">
+            <h1 className="text-2xl font-brutal">관리자 대시보드</h1>
+            <button
+              onClick={() => { setIsAdmin(false); setStep('landing'); }}
+              className="text-sm underline text-red-500"
+            >
+              나가기
             </button>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 방 목록 */}
-          <div className="lg:col-span-1">
-            <Card>
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="font-brutal">검사 방 목록</h2>
-                <Button onClick={() => setShowCreateRoom(!showCreateRoom)} variant="success" className="text-sm py-1 px-3">
-                  + 새 방
-                </Button>
-              </div>
-
-              {showCreateRoom && (
-                <div className="mb-4 p-3 bg-gray-50 brutal-border">
-                  <Input value={newRoomName} onChange={setNewRoomName} placeholder="방 이름" className="mb-2" />
-                  <Input value={newRoomDesc} onChange={setNewRoomDesc} placeholder="설명 (선택)" className="mb-2" />
-                  <div className="flex gap-2">
-                    <Button onClick={handleCreateRoom} disabled={loading} className="flex-1 text-sm py-1">생성</Button>
-                    <Button onClick={() => setShowCreateRoom(false)} variant="danger" className="text-sm py-1">취소</Button>
-                  </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Room List */}
+            <div className="lg:col-span-1">
+              <Card className="border-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="font-brutal">과정 목록</h2>
+                  <Button onClick={() => setShowCreateRoom(!showCreateRoom)} variant="success" className="text-sm py-1 px-3">
+                    + 새 과정
+                  </Button>
                 </div>
-              )}
 
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {adminRooms.map(room => (
-                  <div
-                    key={room.id}
-                    onClick={() => handleSelectRoom(room)}
-                    className={`p-3 brutal-border cursor-pointer transition-colors ${selectedRoom?.id === room.id ? 'bg-[#A3E635]' : 'bg-white hover:bg-gray-50'}`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-bold">{room.name}</h3>
-                        <p className="text-xs opacity-70">{room.description}</p>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-xs font-brutal bg-black text-white px-2">{room.accessCode}</span>
-                        <p className="text-xs mt-1">{room.participantCount || 0}명</p>
-                      </div>
+                {showCreateRoom && (
+                  <div className="mb-4 p-3 bg-gray-50 brutal-border">
+                    <Input
+                      value={newRoomName}
+                      onChange={setNewRoomName}
+                      placeholder="과정명"
+                      className="mb-2"
+                    />
+                    <div className="mb-2">
+                      <label className="block text-xs font-bold mb-1">팀 갯수</label>
+                      <Select
+                        value={newRoomTeamCount}
+                        onChange={setNewRoomTeamCount}
+                        options={[
+                          { value: '2', label: '2개 팀' },
+                          { value: '3', label: '3개 팀' },
+                          { value: '4', label: '4개 팀' },
+                          { value: '5', label: '5개 팀' },
+                          { value: '6', label: '6개 팀' },
+                          { value: '7', label: '7개 팀' },
+                          { value: '8', label: '8개 팀' },
+                          { value: '9', label: '9개 팀' },
+                          { value: '10', label: '10개 팀' },
+                        ]}
+                      />
                     </div>
-                  </div>
-                ))}
-                {adminRooms.length === 0 && (
-                  <p className="text-center text-sm opacity-50">아직 생성된 방이 없습니다.</p>
-                )}
-              </div>
-            </Card>
-          </div>
-
-          {/* 통계 및 결과 */}
-          <div className="lg:col-span-2">
-            {selectedRoom ? (
-              <>
-                {/* 방 정보 */}
-                <Card className="mb-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h2 className="font-brutal text-xl">{selectedRoom.name}</h2>
-                      <p className="text-sm opacity-70">{selectedRoom.description}</p>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-brutal bg-[#FFDE03] px-3 py-1 brutal-border">{selectedRoom.accessCode}</div>
-                      <p className="text-xs mt-1">접속 코드</p>
-                    </div>
-                  </div>
-                </Card>
-
-                {/* 통계 */}
-                {roomStats && roomStats.totalParticipants > 0 && (
-                  <Card className="mb-4">
-                    <h3 className="font-brutal mb-4">종합 통계</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                      <div className="text-center p-3 bg-gray-50 brutal-border">
-                        <div className="text-3xl font-brutal">{roomStats.totalParticipants}</div>
-                        <div className="text-xs">참여자</div>
-                      </div>
-                      <div className="text-center p-3 bg-gray-50 brutal-border">
-                        <div className="text-3xl font-brutal">{roomStats.averageTotalScore}</div>
-                        <div className="text-xs">평균 점수</div>
-                      </div>
-                      <div className="text-center p-3 bg-[#A3E635] brutal-border">
-                        <div className="text-3xl font-brutal">{roomStats.scoreDistribution.high}</div>
-                        <div className="text-xs">인재파</div>
-                      </div>
-                      <div className="text-center p-3 bg-[#FF5C00] text-white brutal-border">
-                        <div className="text-3xl font-brutal">{roomStats.scoreDistribution.low}</div>
-                        <div className="text-xs">관리필요</div>
-                      </div>
-                    </div>
-
+                    {error && <p className="text-red-500 text-xs font-bold mb-2">{error}</p>}
                     <div className="flex gap-2">
-                      <Button onClick={handleExportRoomData} variant="secondary" className="text-sm py-2">
-                        CSV 다운로드
+                      <Button onClick={handleCreateRoom} disabled={loading} className="flex-1 text-sm py-1">
+                        {loading ? '생성 중...' : '생성'}
+                      </Button>
+                      <Button onClick={() => { setShowCreateRoom(false); setError(''); }} variant="danger" className="text-sm py-1">
+                        취소
                       </Button>
                     </div>
-                  </Card>
+                  </div>
                 )}
 
-                {/* 참가자 목록 */}
-                <Card>
-                  <h3 className="font-brutal mb-4">참가자 결과 ({roomParticipants.length}명)</h3>
-
-                  {selectedParticipant ? (
-                    <div>
-                      <button onClick={() => setSelectedParticipant(null)} className="text-sm underline mb-4">
-                        목록으로 돌아가기
-                      </button>
-                      <div className="bg-gray-50 p-4 brutal-border">
-                        <h4 className="font-brutal text-lg mb-2">{selectedParticipant.name}</h4>
-                        <div className="grid grid-cols-2 gap-4 mb-4">
-                          <div>
-                            <span className="text-xs opacity-70">총점</span>
-                            <div className="text-2xl font-brutal">{selectedParticipant.result.totalScore}</div>
-                          </div>
-                          <div>
-                            <span className="text-xs opacity-70">유형</span>
-                            <div className="font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
-                          </div>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {activeRooms.map(room => (
+                    <div
+                      key={room.id}
+                      className={`p-3 brutal-border cursor-pointer transition-colors ${selectedRoom?.id === room.id ? 'bg-[#A3E635]' : 'bg-white hover:bg-gray-50'}`}
+                    >
+                      <div className="flex justify-between items-start" onClick={() => handleSelectRoom(room)}>
+                        <div>
+                          <h3 className="font-bold">{room.name}</h3>
+                          <p className="text-xs opacity-70">{room.teamCount || 0}개 팀</p>
                         </div>
-                        <div className="space-y-2">
-                          <div className="flex justify-between text-sm">
-                            <span>자기조절능력</span>
-                            <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}</span>
+                        <div className="text-right">
+                          <span className="text-xs font-brutal bg-black text-white px-2">{room.accessCode}</span>
+                          <p className="text-xs mt-1">{room.participantCount || 0}명</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteRoom(room.id); }}
+                        className="text-xs text-red-500 underline mt-2"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  ))}
+                  {activeRooms.length === 0 && (
+                    <p className="text-center text-sm opacity-50">아직 생성된 과정이 없습니다.</p>
+                  )}
+                </div>
+              </Card>
+            </div>
+
+            {/* Stats & Results */}
+            <div className="lg:col-span-2">
+              {selectedRoom ? (
+                <>
+                  {/* Room Info */}
+                  <Card className="mb-4 border-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h2 className="font-brutal text-xl">{selectedRoom.name}</h2>
+                        <p className="text-sm opacity-70">{selectedRoom.teamCount || 0}개 팀</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-brutal bg-[#FFDE03] px-3 py-1 brutal-border">{selectedRoom.accessCode}</div>
+                        <p className="text-xs mt-1">접속 코드</p>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* Stats */}
+                  {roomStats && roomStats.totalParticipants > 0 && (
+                    <Card className="mb-4 border-4">
+                      <h3 className="font-brutal mb-4">종합 통계</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div className="text-center p-3 bg-gray-50 brutal-border">
+                          <div className="text-3xl font-brutal">{roomStats.totalParticipants}</div>
+                          <div className="text-xs">참여자</div>
+                        </div>
+                        <div className="text-center p-3 bg-gray-50 brutal-border">
+                          <div className="text-3xl font-brutal">{roomStats.averageTotalScore}</div>
+                          <div className="text-xs">평균 점수</div>
+                        </div>
+                        <div className="text-center p-3 bg-[#A3E635] brutal-border">
+                          <div className="text-3xl font-brutal">{roomStats.scoreDistribution.high}</div>
+                          <div className="text-xs">슈퍼 고무공</div>
+                        </div>
+                        <div className="text-center p-3 bg-[#FF5C00] text-white brutal-border">
+                          <div className="text-3xl font-brutal">{roomStats.scoreDistribution.low}</div>
+                          <div className="text-xs">마시멜로우</div>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 flex-wrap">
+                        <Button onClick={handleExportCSV} variant="secondary" className="text-sm py-2">
+                          CSV 다운로드
+                        </Button>
+                        <Button onClick={handleBatchPDFDownload} variant="primary" className="text-sm py-2">
+                          전체 PDF 다운로드
+                        </Button>
+                      </div>
+                    </Card>
+                  )}
+
+                  {/* View Mode Toggle */}
+                  <Card className="border-4">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-brutal">참가자 결과 ({roomParticipants.length}명)</h3>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setViewMode('all'); setSelectedTeamFilter(''); }}
+                          className={`text-xs px-3 py-1 brutal-border ${viewMode === 'all' ? 'bg-black text-white' : 'bg-white'}`}
+                        >
+                          전체보기
+                        </button>
+                        <button
+                          onClick={() => setViewMode('team')}
+                          className={`text-xs px-3 py-1 brutal-border ${viewMode === 'team' ? 'bg-black text-white' : 'bg-white'}`}
+                        >
+                          팀별보기
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Team Filter */}
+                    {viewMode === 'team' && (
+                      <div className="flex gap-2 flex-wrap mb-4">
+                        {Object.keys(teamGroups).map(team => (
+                          <button
+                            key={team}
+                            onClick={() => setSelectedTeamFilter(selectedTeamFilter === team ? '' : team)}
+                            className={`text-xs px-3 py-1 brutal-border ${selectedTeamFilter === team ? 'bg-[#A3E635]' : 'bg-white'}`}
+                          >
+                            {team} ({teamGroups[team].length}명)
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {selectedParticipant ? (
+                      <div>
+                        <button onClick={() => setSelectedParticipant(null)} className="text-sm underline mb-4">
+                          목록으로 돌아가기
+                        </button>
+                        <div className="bg-gray-50 p-4 brutal-border">
+                          <h4 className="font-brutal text-lg mb-2">{selectedParticipant.name}</h4>
+                          <p className="text-sm opacity-70 mb-4">{selectedParticipant.team || '미지정'}</p>
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <span className="text-xs opacity-70">총점</span>
+                              <div className="text-2xl font-brutal">{selectedParticipant.result.totalScore}</div>
+                            </div>
+                            <div>
+                              <span className="text-xs opacity-70">유형</span>
+                              <div className="font-bold text-[#FF5C00]">{selectedParticipant.result.persona}</div>
+                            </div>
                           </div>
-                          <div className="flex justify-between text-sm">
-                            <span>대인관계능력</span>
-                            <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}</span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span>긍정성</span>
-                            <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}</span>
+                          <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                              <span>자기조절능력</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.SELF_REGULATION]}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span>대인관계능력</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.INTERPERSONAL]}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span>긍정성</span>
+                              <span className="font-bold">{selectedParticipant.result.categoryScores[Category.POSITIVITY]}</span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-96 overflow-y-auto">
-                      {roomParticipants.map(p => (
-                        <div
-                          key={p.id}
-                          onClick={() => setSelectedParticipant(p)}
-                          className="p-3 bg-white brutal-border cursor-pointer hover:bg-gray-50"
-                        >
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <span className="font-bold">{p.name}</span>
-                              <span className="text-xs ml-2 opacity-50">{p.email}</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className={`text-xs px-2 py-1 font-bold ${p.result.totalScore >= 200 ? 'bg-[#A3E635]' : p.result.totalScore >= 180 ? 'bg-[#FFDE03]' : 'bg-[#FF5C00] text-white'}`}>
-                                {p.result.totalScore}점
-                              </span>
-                              <span className="text-xs opacity-50">
-                                {new Date(p.completedAt).toLocaleDateString()}
-                              </span>
+                    ) : (
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {filteredParticipants.map(p => (
+                          <div
+                            key={p.id}
+                            onClick={() => setSelectedParticipant(p)}
+                            className="p-3 bg-white brutal-border cursor-pointer hover:bg-gray-50"
+                          >
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <span className="font-bold">{p.name}</span>
+                                <span className="text-xs ml-2 px-2 py-0.5 bg-gray-100 brutal-border border-[1px]">{p.team || '미지정'}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className={`text-xs px-2 py-1 font-bold ${p.result.totalScore >= 201 ? 'bg-[#A3E635]' : p.result.totalScore >= 181 ? 'bg-[#FFDE03]' : 'bg-[#FF5C00] text-white'}`}>
+                                  {p.result.totalScore}점
+                                </span>
+                                <span className="text-xs opacity-50">
+                                  {new Date(p.completedAt).toLocaleDateString()}
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                      {roomParticipants.length === 0 && (
-                        <p className="text-center text-sm opacity-50 py-8">아직 참여자가 없습니다.</p>
-                      )}
-                    </div>
-                  )}
+                        ))}
+                        {filteredParticipants.length === 0 && (
+                          <p className="text-center text-sm opacity-50 py-8">참여자가 없습니다.</p>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                </>
+              ) : (
+                <Card className="text-center py-12 border-4">
+                  <p className="text-lg opacity-50">왼쪽에서 과정을 선택하세요</p>
                 </Card>
-              </>
-            ) : (
-              <Card className="text-center py-12">
-                <p className="text-lg opacity-50">왼쪽에서 방을 선택하세요</p>
-              </Card>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // Main render
   switch (step) {
     case 'landing': return renderLanding();
-    case 'join-room': return renderJoinRoom();
-    case 'intro': return renderIntro();
-    case 'user-info': return renderUserInfo();
+    case 'participant-info': return renderParticipantInfo();
     case 'test': return renderTest();
     case 'result': return renderResult();
     case 'admin-login': return renderAdminLogin();
