@@ -154,6 +154,38 @@ const App: React.FC = () => {
     }
   };
 
+  // Auto-save result when test is completed (step changes to 'result')
+  const [autoSaved, setAutoSaved] = useState(false);
+
+  useEffect(() => {
+    const autoSaveResult = async () => {
+      if (step === 'result' && currentRoom && !autoSaved && Object.keys(answers).length === QUESTIONS.length) {
+        try {
+          await saveParticipantResult(currentRoom.id, {
+            roomId: currentRoom.id,
+            name: userName,
+            team: userTeam,
+            completedAt: new Date().toISOString(),
+            result: calculateResults
+          });
+          setAutoSaved(true);
+          console.log('Result auto-saved to Firestore');
+        } catch (e) {
+          console.error('Auto-save error:', e);
+        }
+      }
+    };
+
+    autoSaveResult();
+  }, [step, currentRoom, autoSaved, answers, userName, userTeam]);
+
+  // Reset autoSaved when starting a new test
+  useEffect(() => {
+    if (step === 'test') {
+      setAutoSaved(false);
+    }
+  }, [step]);
+
   // Handlers
   const handleSelectCourse = (room: Room) => {
     setCurrentRoom(room);
@@ -183,6 +215,34 @@ const App: React.FC = () => {
       setCurrentIdx(currentIdx + 1);
     } else {
       setStep('result');
+    }
+  };
+
+  // Go back to previous question
+  const handleGoBack = () => {
+    if (currentIdx > 0) {
+      setCurrentIdx(currentIdx - 1);
+    }
+  };
+
+  // Handle answer change (for when going back and selecting a different answer)
+  const handleAnswerChange = (value: number) => {
+    const currentAnswer = answers[QUESTIONS[currentIdx].id];
+    if (currentAnswer === value) {
+      // If clicking the same answer, just proceed to next question
+      if (currentIdx < QUESTIONS.length - 1) {
+        setCurrentIdx(currentIdx + 1);
+      } else {
+        setStep('result');
+      }
+    } else {
+      // If clicking a different answer, update and proceed
+      setAnswers(prev => ({ ...prev, [QUESTIONS[currentIdx].id]: value }));
+      if (currentIdx < QUESTIONS.length - 1) {
+        setCurrentIdx(currentIdx + 1);
+      } else {
+        setStep('result');
+      }
     }
   };
 
@@ -412,7 +472,8 @@ const App: React.FC = () => {
   const handleSaveResult = async () => {
     setLoading(true);
     try {
-      if (currentRoom) {
+      // Only save to Firestore if not already auto-saved
+      if (currentRoom && !autoSaved) {
         await saveParticipantResult(currentRoom.id, {
           roomId: currentRoom.id,
           name: userName,
@@ -420,10 +481,11 @@ const App: React.FC = () => {
           completedAt: new Date().toISOString(),
           result: calculateResults
         });
+        setAutoSaved(true);
       }
       setSavedResult(calculateResults);
       await generateAndDownloadPDF();
-      alert("결과가 저장되었습니다!");
+      alert("PDF가 다운로드되었습니다!" + (autoSaved ? " (결과는 이미 저장됨)" : " 결과도 저장되었습니다!"));
     } catch (e) {
       console.error('Save error:', e);
       alert('저장 중 오류가 발생했습니다.');
@@ -824,12 +886,23 @@ const App: React.FC = () => {
   const renderTest = () => {
     const q = QUESTIONS[currentIdx];
     const progress = ((currentIdx + 1) / QUESTIONS.length) * 100;
+    const currentAnswer = answers[q.id]; // 현재 질문에 대한 기존 답변
 
     return (
       <div className="min-h-screen p-6 flex flex-col max-w-lg mx-auto">
         <div className="mb-8">
           <div className="flex justify-between items-end mb-2">
-            <span className="font-brutal text-2xl">Q {currentIdx + 1}</span>
+            <div className="flex items-center gap-3">
+              {currentIdx > 0 && (
+                <button
+                  onClick={handleGoBack}
+                  className="text-sm font-bold px-3 py-1 bg-white brutal-border hover:bg-gray-100 active:scale-95"
+                >
+                  ← 이전
+                </button>
+              )}
+              <span className="font-brutal text-2xl">Q {currentIdx + 1}</span>
+            </div>
             <span className="font-bold">{currentIdx + 1} / {QUESTIONS.length}</span>
           </div>
           <div className="w-full h-4 bg-white brutal-border overflow-hidden">
@@ -847,13 +920,32 @@ const App: React.FC = () => {
               { val: 3, text: "보통이다" },
               { val: 2, text: "그렇지 않다" },
               { val: 1, text: "전혀 그렇지 않다" }
-            ].map((opt) => (
-              <Button key={opt.val} onClick={() => handleAnswer(opt.val)} className="text-left py-3 px-5 flex justify-between items-center bg-white hover:bg-[#A3E635] active:scale-95">
-                <span className="font-bold">{opt.text}</span>
-                <span className="text-xs font-brutal opacity-30">{opt.val}</span>
-              </Button>
-            ))}
+            ].map((opt) => {
+              const isSelected = currentAnswer === opt.val;
+              return (
+                <Button
+                  key={opt.val}
+                  onClick={() => handleAnswerChange(opt.val)}
+                  className={`text-left py-3 px-5 flex justify-between items-center active:scale-95 ${
+                    isSelected
+                      ? 'bg-[#A3E635] border-4 border-black'
+                      : 'bg-white hover:bg-[#A3E635]'
+                  }`}
+                >
+                  <span className="font-bold flex items-center gap-2">
+                    {isSelected && <span className="text-lg">✓</span>}
+                    {opt.text}
+                  </span>
+                  <span className="text-xs font-brutal opacity-30">{opt.val}</span>
+                </Button>
+              );
+            })}
           </div>
+          {currentAnswer && (
+            <p className="text-xs text-center mt-4 opacity-60">
+              이미 선택한 답변이 있습니다. 다른 답변을 선택하거나 같은 답변을 눌러 다음으로 이동하세요.
+            </p>
+          )}
         </div>
       </div>
     );
@@ -1128,13 +1220,20 @@ const App: React.FC = () => {
 
         {/* Bottom Buttons */}
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-[#FFDE03] border-t-4 border-black z-50">
-          <div className="flex gap-2 w-full max-w-4xl mx-auto">
-            <Button onClick={handleSaveResult} disabled={loading} className="flex-1 bg-white flex flex-col items-center py-2">
-              <span className="text-lg">{loading ? '저장 중...' : '결과 저장 및 PDF 다운로드'}</span>
-            </Button>
-            <Button onClick={() => window.location.reload()} variant="danger" className="flex-none px-4">
-              처음으로
-            </Button>
+          <div className="flex flex-col gap-2 w-full max-w-4xl mx-auto">
+            {autoSaved && (
+              <div className="text-center text-xs font-bold text-green-700 bg-green-100 p-2 brutal-border">
+                ✓ 결과가 자동으로 저장되었습니다 (관리자 대시보드에서 확인 가능)
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={handleSaveResult} disabled={loading} className="flex-1 bg-white flex flex-col items-center py-2">
+                <span className="text-lg">{loading ? '저장 중...' : 'PDF 다운로드'}</span>
+              </Button>
+              <Button onClick={() => window.location.reload()} variant="danger" className="flex-none px-4">
+                처음으로
+              </Button>
+            </div>
           </div>
         </div>
       </div>
