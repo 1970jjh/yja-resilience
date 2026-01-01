@@ -104,6 +104,7 @@ export const getRoomsByAdmin = async (adminId: string): Promise<Room[]> => {
   );
   const snapshot = await getDocs(q);
   const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Room));
+  // JavaScript에서 정렬 (최신순)
   return rooms.sort((a, b) => {
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -177,6 +178,7 @@ export const getParticipantsByRoom = async (roomId: string): Promise<Participant
   );
   const snapshot = await getDocs(q);
   const participants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Participant));
+  // JavaScript에서 정렬 (최신순)
   return participants.sort((a, b) => {
     const dateA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
     const dateB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
