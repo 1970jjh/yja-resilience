@@ -22,6 +22,25 @@ import {
 // --- Constants ---
 const ADMIN_PASSWORD = "6749467";
 
+// Category mappings for PDF generation
+const categoryMapping = {
+  [Category.SELF_REGULATION]: [SubCategory.EMOTION_CONTROL, SubCategory.IMPULSE_CONTROL, SubCategory.CAUSAL_ANALYSIS],
+  [Category.INTERPERSONAL]: [SubCategory.COMMUNICATION, SubCategory.EMPATHY, SubCategory.EGO_EXPANSION],
+  [Category.POSITIVITY]: [SubCategory.SELF_OPTIMISM, SubCategory.LIFE_SATISFACTION, SubCategory.GRATITUDE],
+};
+
+const categoryColor: Record<Category, string> = {
+  [Category.SELF_REGULATION]: "#FF5C00",
+  [Category.INTERPERSONAL]: "#00D1FF",
+  [Category.POSITIVITY]: "#A3E635",
+};
+
+const koreanAverageScores: Record<Category, number> = {
+  [Category.SELF_REGULATION]: 63.5,
+  [Category.INTERPERSONAL]: 67.8,
+  [Category.POSITIVITY]: 63.4,
+};
+
 // --- Utility Components ---
 const Button: React.FC<{
   onClick?: () => void;
