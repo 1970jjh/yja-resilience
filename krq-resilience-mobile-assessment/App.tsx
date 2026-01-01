@@ -204,8 +204,9 @@ const App: React.FC = () => {
       setNewRoomTeamCount('3');
       setShowCreateRoom(false);
       setError('');
-    } catch (e) {
-      setError('과정 생성 실패');
+    } catch (e: any) {
+      console.error('Room creation error:', e);
+      setError(`과정 생성 실패: ${e.message || e}`);
     }
     setLoading(false);
   };
