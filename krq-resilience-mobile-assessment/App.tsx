@@ -514,10 +514,19 @@ const App: React.FC = () => {
 
   const generateAndDownloadPDF = async (participant?: Participant) => {
     const element = document.getElementById('result-content');
-    if (!element) return;
+    if (!element) {
+      console.error('PDF generation error: result-content element not found');
+      alert('PDF 생성 오류: 결과 컨텐츠를 찾을 수 없습니다.');
+      return;
+    }
 
     try {
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#FFDE03'
+      });
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -537,14 +546,26 @@ const App: React.FC = () => {
       }
 
       const name = participant?.name || userName;
-      pdf.save(`KRQ_회복탄력성_${name}_${new Date().toLocaleDateString()}.pdf`);
+      const filename = `KRQ_회복탄력성_${name}_${new Date().toLocaleDateString('ko-KR')}.pdf`;
+
+      // Use blob approach for better mobile compatibility
+      const pdfBlob = pdf.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (e) {
       console.error('PDF generation error:', e);
+      alert('PDF 생성 중 오류가 발생했습니다. 다시 시도해주세요.');
     }
   };
 
   // Generate single participant PDF as blob using html2canvas for Korean support
-  // Updated: 2024-01-01 - Force rebuild for Vercel deployment
+  // Each of 9 factors on separate pages for better readability
   const generateParticipantPDFBlob = async (participant: Participant): Promise<Blob> => {
     const result = participant.result;
     const personaRule = PERSONA_RULES.find(r => result.totalScore >= r.min);
@@ -554,112 +575,142 @@ const App: React.FC = () => {
       ? new Date(participant.completedAt).toLocaleDateString('ko-KR')
       : new Date().toLocaleDateString('ko-KR');
 
-    // Create temporary container for rendering
-    const tempContainer = document.createElement('div');
-    tempContainer.id = `temp-pdf-container-${Date.now()}`;
-    tempContainer.style.cssText = `
-      position: absolute;
-      left: -9999px;
-      top: 0;
-      width: 800px;
-      background: #FFDE03;
-      padding: 30px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
-      z-index: -1;
-    `;
-
-    // Build HTML content
     const subCategoryAnalysis = result.subCategoryAnalysis || [];
     const sortedAnalysis = [...subCategoryAnalysis].sort((a, b) => a.percentage - b.percentage);
 
-    tempContainer.innerHTML = `
-      <div style="border: 4px solid black; padding: 20px; background: #FFDE03;">
+    // Helper function to render HTML to canvas and add to PDF
+    const renderPageToPDF = async (html: string, pdf: any, isFirstPage: boolean) => {
+      const tempContainer = document.createElement('div');
+      tempContainer.id = `temp-pdf-page-${Date.now()}`;
+      tempContainer.style.cssText = `
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        width: 800px;
+        min-height: 1100px;
+        background: #FFDE03;
+        padding: 30px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+        z-index: -1;
+        box-sizing: border-box;
+      `;
+      tempContainer.innerHTML = html;
+      document.body.appendChild(tempContainer);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      try {
+        const canvas = await html2canvas(tempContainer, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#FFDE03',
+          logging: false,
+          allowTaint: true
+        });
+
+        const imgData = canvas.toDataURL('image/png');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+
+        if (!isFirstPage) {
+          pdf.addPage();
+        }
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      } finally {
+        document.body.removeChild(tempContainer);
+      }
+    };
+
+    const pdf = new jsPDF('p', 'mm', 'a4');
+
+    // Page 1: Overview
+    const page1Html = `
+      <div style="border: 4px solid black; padding: 20px; background: #FFDE03; min-height: 1040px;">
         <!-- Header -->
-        <h1 style="font-size: 24px; font-weight: 900; text-align: center; margin: 0 0 10px 0; border-bottom: 4px solid black; padding-bottom: 10px;">
+        <h1 style="font-size: 28px; font-weight: 900; text-align: center; margin: 0 0 10px 0; border-bottom: 4px solid black; padding-bottom: 10px;">
           회복탄력성 심층 분석 리포트
         </h1>
-        <p style="text-align: center; font-weight: bold; margin: 0 0 20px 0;">
+        <p style="text-align: center; font-weight: bold; margin: 0 0 25px 0; font-size: 14px;">
           ${participant.team || '-'} | ${participant.name}님 | ${completedDate}
         </p>
 
         <!-- Persona & Total Score -->
-        <div style="display: flex; gap: 20px; margin-bottom: 20px;">
-          <div style="flex: 1; background: ${personaRule?.color || '#fff'}; border: 4px solid black; padding: 15px; text-align: center;">
-            <p style="font-size: 10px; font-weight: bold; margin: 0;">당신의 유형</p>
-            <div style="font-size: 40px; margin: 10px 0;">${personaRule?.emoji || ''}</div>
-            <h2 style="font-size: 20px; font-weight: 900; margin: 0 0 5px 0;">${result.persona}</h2>
-            <p style="font-size: 10px; font-weight: bold; margin: 0;">${personaRule?.desc || ''}</p>
+        <div style="display: flex; gap: 20px; margin-bottom: 25px;">
+          <div style="flex: 1; background: ${personaRule?.color || '#fff'}; border: 4px solid black; padding: 20px; text-align: center;">
+            <p style="font-size: 12px; font-weight: bold; margin: 0;">당신의 유형</p>
+            <div style="font-size: 50px; margin: 12px 0;">${personaRule?.emoji || ''}</div>
+            <h2 style="font-size: 24px; font-weight: 900; margin: 0 0 8px 0;">${result.persona}</h2>
+            <p style="font-size: 12px; font-weight: bold; margin: 0;">${personaRule?.desc || ''}</p>
           </div>
-          <div style="flex: 1; background: white; border: 4px solid black; padding: 15px; text-align: center;">
-            <p style="font-size: 10px; font-weight: bold; margin: 0;">총점</p>
-            <div style="font-size: 48px; font-weight: 900; margin: 10px 0;">${result.totalScore}</div>
-            <div style="font-size: 9px; font-weight: bold;">
-              <p style="margin: 2px 0; ${result.totalScore >= 201 ? 'background: black; color: white; padding: 2px;' : 'opacity: 0.6;'}">201점 이상: 슈퍼 고무공</p>
-              <p style="margin: 2px 0; ${result.totalScore >= 181 && result.totalScore <= 200 ? 'background: black; color: white; padding: 2px;' : 'opacity: 0.6;'}">181-200점: 테니스공</p>
-              <p style="margin: 2px 0; ${result.totalScore <= 180 ? 'background: black; color: white; padding: 2px;' : 'opacity: 0.6;'}">180점 이하: 마시멜로우</p>
+          <div style="flex: 1; background: white; border: 4px solid black; padding: 20px; text-align: center;">
+            <p style="font-size: 12px; font-weight: bold; margin: 0;">총점</p>
+            <div style="font-size: 60px; font-weight: 900; margin: 12px 0;">${result.totalScore}</div>
+            <div style="font-size: 11px; font-weight: bold;">
+              <p style="margin: 3px 0; ${result.totalScore >= 201 ? 'background: black; color: white; padding: 3px;' : 'opacity: 0.6;'}">201점 이상: 슈퍼 고무공</p>
+              <p style="margin: 3px 0; ${result.totalScore >= 181 && result.totalScore <= 200 ? 'background: black; color: white; padding: 3px;' : 'opacity: 0.6;'}">181-200점: 테니스공</p>
+              <p style="margin: 3px 0; ${result.totalScore <= 180 ? 'background: black; color: white; padding: 3px;' : 'opacity: 0.6;'}">180점 이하: 마시멜로우</p>
             </div>
           </div>
         </div>
 
         <!-- Overall Interpretation -->
-        <div style="background: white; border: 4px solid black; padding: 15px; margin-bottom: 20px;">
-          <h3 style="font-weight: 900; font-size: 16px; margin: 0 0 10px 0; border-bottom: 2px solid black; padding-bottom: 5px;">종합 해석</h3>
-          <p style="font-size: 12px; line-height: 1.6; margin: 0;">${result.overallInterpretation}</p>
+        <div style="background: white; border: 4px solid black; padding: 20px; margin-bottom: 25px;">
+          <h3 style="font-weight: 900; font-size: 18px; margin: 0 0 12px 0; border-bottom: 2px solid black; padding-bottom: 8px;">종합 해석</h3>
+          <p style="font-size: 14px; line-height: 1.7; margin: 0;">${result.overallInterpretation}</p>
         </div>
 
         <!-- Strengths & Improvements -->
-        <div style="display: flex; gap: 20px; margin-bottom: 20px;">
-          <div style="flex: 1; background: #A3E635; border: 4px solid black; padding: 15px;">
-            <h3 style="font-weight: 900; font-size: 14px; margin: 0 0 10px 0;">나의 강점 TOP 3</h3>
+        <div style="display: flex; gap: 20px; margin-bottom: 25px;">
+          <div style="flex: 1; background: #A3E635; border: 4px solid black; padding: 18px;">
+            <h3 style="font-weight: 900; font-size: 16px; margin: 0 0 15px 0;">나의 강점 TOP 3</h3>
             ${result.strengthAreas.map((area, i) => `
-              <div style="background: rgba(255,255,255,0.5); padding: 8px; margin-bottom: 8px; border-radius: 4px;">
-                <div style="font-weight: bold; font-size: 12px;">${i + 1}. ${area}</div>
+              <div style="background: rgba(255,255,255,0.6); padding: 12px; margin-bottom: 10px; border-radius: 4px;">
+                <div style="font-weight: bold; font-size: 14px;">${i + 1}. ${area}</div>
               </div>
             `).join('')}
           </div>
-          <div style="flex: 1; background: #FF5C00; color: white; border: 4px solid black; padding: 15px;">
-            <h3 style="font-weight: 900; font-size: 14px; margin: 0 0 10px 0;">성장 필요 영역 TOP 3</h3>
+          <div style="flex: 1; background: #FF5C00; color: white; border: 4px solid black; padding: 18px;">
+            <h3 style="font-weight: 900; font-size: 16px; margin: 0 0 15px 0;">성장 필요 영역 TOP 3</h3>
             ${result.improvementAreas.map((area, i) => `
-              <div style="background: rgba(255,255,255,0.2); padding: 8px; margin-bottom: 8px; border-radius: 4px;">
-                <div style="font-weight: bold; font-size: 12px;">${i + 1}. ${area}</div>
+              <div style="background: rgba(255,255,255,0.25); padding: 12px; margin-bottom: 10px; border-radius: 4px;">
+                <div style="font-weight: bold; font-size: 14px;">${i + 1}. ${area}</div>
               </div>
             `).join('')}
           </div>
         </div>
 
-        <!-- Category Scores -->
-        <div style="background: white; border: 4px solid black; padding: 15px; margin-bottom: 20px;">
-          <h3 style="font-weight: 900; font-size: 14px; margin: 0 0 15px 0; border-bottom: 2px solid black; padding-bottom: 5px;">영역별 상세 점수</h3>
+        <!-- Category Scores Summary -->
+        <div style="background: white; border: 4px solid black; padding: 18px;">
+          <h3 style="font-weight: 900; font-size: 16px; margin: 0 0 15px 0; border-bottom: 2px solid black; padding-bottom: 8px;">영역별 상세 점수</h3>
           ${(Object.keys(categoryMapping) as Category[]).map(cat => {
             const catScore = result.categoryScores[cat];
             const avg = koreanAverageScores[cat];
             return `
-              <div style="margin-bottom: 15px;">
-                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid black; padding-bottom: 5px; margin-bottom: 8px;">
+              <div style="margin-bottom: 18px;">
+                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid black; padding-bottom: 6px; margin-bottom: 10px;">
                   <div>
-                    <span style="font-weight: 900; font-size: 13px; color: ${categoryColor[cat]};">${cat}</span>
-                    <span style="font-size: 9px; opacity: 0.6; margin-left: 10px;">한국인 평균 ${avg}점</span>
+                    <span style="font-weight: 900; font-size: 15px; color: ${categoryColor[cat]};">${cat}</span>
+                    <span style="font-size: 11px; opacity: 0.6; margin-left: 12px;">한국인 평균 ${avg}점</span>
                   </div>
                   <div style="text-align: right;">
-                    <span style="font-weight: 900; font-size: 16px;">${catScore}점</span>
-                    <span style="font-size: 9px; color: ${catScore >= avg ? '#A3E635' : '#FF5C00'}; font-weight: bold; margin-left: 5px;">
+                    <span style="font-weight: 900; font-size: 18px;">${catScore}점</span>
+                    <span style="font-size: 11px; color: ${catScore >= avg ? '#A3E635' : '#FF5C00'}; font-weight: bold; margin-left: 8px;">
                       ${catScore >= avg ? '▲ 평균 이상' : '▼ 평균 이하'}
                     </span>
                   </div>
                 </div>
-                <div style="padding-left: 10px;">
+                <div style="padding-left: 12px;">
                   ${categoryMapping[cat].map(sub => {
                     const analysis = subCategoryAnalysis.find(s => s.subCategory === sub);
                     if (!analysis) return '';
                     return `
-                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 4px;">
+                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 6px;">
                         <span style="font-weight: bold;">${sub}</span>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                          <span style="font-size: 9px; background: #eee; padding: 1px 4px;">${analysis.level}</span>
-                          <div style="width: 60px; height: 8px; background: #ddd; border: 1px solid black;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                          <span style="font-size: 10px; background: #eee; padding: 2px 6px;">${analysis.level}</span>
+                          <div style="width: 80px; height: 10px; background: #ddd; border: 1px solid black;">
                             <div style="height: 100%; background: ${categoryColor[cat]}; width: ${analysis.percentage}%;"></div>
                           </div>
-                          <span style="font-weight: 900; width: 40px; text-align: right;">${analysis.score}/${analysis.maxScore}</span>
+                          <span style="font-weight: 900; width: 50px; text-align: right;">${analysis.score}/${analysis.maxScore}</span>
                         </div>
                       </div>
                     `;
@@ -669,155 +720,172 @@ const App: React.FC = () => {
             `;
           }).join('')}
         </div>
+      </div>
+    `;
+    await renderPageToPDF(page1Html, pdf, true);
 
-        <!-- 9 Factor Detailed Feedback -->
-        <div style="background: black; color: white; padding: 10px; text-align: center; font-weight: 900; font-size: 14px; margin-bottom: 15px;">
-          9가지 요인 맞춤 분석 및 성장 가이드
-        </div>
-        <p style="text-align: center; font-size: 10px; opacity: 0.7; margin-bottom: 15px;">※ 낮은 점수 순으로 표시됩니다</p>
+    // Pages 2-10: Each factor on separate page
+    for (let idx = 0; idx < sortedAnalysis.length; idx++) {
+      const analysis = sortedAnalysis[idx];
+      const factorPageHtml = `
+        <div style="border: 4px solid black; padding: 25px; background: #FFDE03; min-height: 1040px;">
+          <!-- Page Header -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 3px solid black;">
+            <div style="font-size: 11px; font-weight: bold; opacity: 0.6;">KRQ-53 회복탄력성 분석</div>
+            <div style="font-size: 11px; font-weight: bold;">${participant.name}님 | ${completedDate}</div>
+          </div>
 
-        ${sortedAnalysis.map((analysis, idx) => `
-          <div style="background: white; border: 4px solid black; padding: 15px; margin-bottom: 15px;">
-            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-              <div>
-                <span style="font-size: 10px; font-weight: bold; padding: 2px 6px; margin-right: 8px; ${idx < 3 ? 'background: #FF5C00; color: white;' : 'background: black; color: white;'}">${idx + 1}</span>
-                <span style="font-weight: 900; font-size: 16px;">${analysis.subCategory}</span>
-                ${idx < 3 ? '<span style="font-size: 10px; color: #FF5C00; font-weight: bold; margin-left: 8px;">← 우선 개선</span>' : ''}
+          <!-- Factor Title -->
+          <div style="background: ${idx < 3 ? '#FF5C00' : 'black'}; color: white; padding: 15px 20px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span style="font-size: 14px; font-weight: bold; margin-right: 10px; padding: 4px 10px; background: rgba(255,255,255,0.2);">${idx + 1}/9</span>
+              <span style="font-weight: 900; font-size: 22px;">${analysis.subCategory}</span>
+              ${idx < 3 ? '<span style="font-size: 12px; font-weight: bold; margin-left: 15px; padding: 3px 8px; background: #FFDE03; color: black;">우선 개선 영역</span>' : ''}
+            </div>
+            <div style="text-align: right;">
+              <div style="font-size: 32px; font-weight: 900;">${analysis.score}<span style="font-size: 16px;">/${analysis.maxScore}</span></div>
+              <span style="font-size: 12px; padding: 3px 10px; font-weight: bold; ${analysis.percentage >= 70 ? 'background: #A3E635; color: black;' : analysis.percentage >= 50 ? 'background: #FFDE03; color: black;' : 'background: white; color: #FF5C00;'}">
+                ${analysis.level}
+              </span>
+            </div>
+          </div>
+
+          <!-- Main Content -->
+          <div style="background: white; border: 4px solid black; padding: 25px; margin-bottom: 20px;">
+            <h4 style="font-weight: 900; font-size: 18px; margin: 0 0 15px 0; color: ${idx < 3 ? '#FF5C00' : 'black'};">${analysis.detailedFeedback?.title || ''}</h4>
+            <p style="font-size: 14px; line-height: 1.8; margin: 0;">${analysis.detailedFeedback?.description || ''}</p>
+          </div>
+
+          <!-- Current State -->
+          <div style="background: #f5f5f5; padding: 20px; border: 3px solid black; margin-bottom: 20px;">
+            <h5 style="font-weight: 900; font-size: 14px; margin: 0 0 10px 0; display: flex; align-items: center; gap: 8px;">
+              <span style="background: black; color: white; padding: 2px 8px; font-size: 11px;">CURRENT</span>
+              현재 상태
+            </h5>
+            <p style="font-size: 13px; line-height: 1.7; margin: 0;">${analysis.detailedFeedback?.currentState || ''}</p>
+          </div>
+
+          <!-- Action Plan -->
+          <div style="background: white; padding: 20px; border: 3px solid black; margin-bottom: 20px;">
+            <h5 style="font-weight: 900; font-size: 14px; margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px;">
+              <span style="background: #A3E635; color: black; padding: 2px 8px; font-size: 11px;">ACTION</span>
+              실천 방법
+            </h5>
+            ${(analysis.detailedFeedback?.actionPlan || []).map((action, i) => `
+              <div style="font-size: 13px; display: flex; gap: 10px; margin-bottom: 10px; padding: 10px; background: #f9f9f9; border-left: 4px solid #A3E635;">
+                <span style="font-weight: 900; color: #A3E635;">${i + 1}</span>
+                <span style="line-height: 1.5;">${action}</span>
               </div>
-              <div style="text-align: right;">
-                <div style="font-size: 20px; font-weight: 900;">${analysis.score}<span style="font-size: 12px;">/${analysis.maxScore}</span></div>
-                <span style="font-size: 10px; padding: 2px 6px; font-weight: bold; ${analysis.percentage >= 70 ? 'background: #A3E635;' : analysis.percentage >= 50 ? 'background: #FFDE03;' : 'background: #FF5C00; color: white;'}">
-                  ${analysis.level}
-                </span>
-              </div>
-            </div>
+            `).join('')}
+          </div>
 
-            <div style="margin-bottom: 12px;">
-              <h4 style="font-weight: bold; font-size: 12px; margin: 0 0 5px 0;">${analysis.detailedFeedback?.title || ''}</h4>
-              <p style="font-size: 10px; line-height: 1.5; margin: 0; opacity: 0.8;">${analysis.detailedFeedback?.description || ''}</p>
-            </div>
+          <!-- Weekly Mission -->
+          <div style="background: #A3E635; padding: 20px; border: 3px solid black; margin-bottom: 20px;">
+            <h5 style="font-weight: 900; font-size: 14px; margin: 0 0 10px 0; display: flex; align-items: center; gap: 8px;">
+              <span style="background: black; color: #A3E635; padding: 2px 8px; font-size: 11px;">MISSION</span>
+              이번 주 미션
+            </h5>
+            <p style="font-size: 13px; line-height: 1.7; margin: 0;">${analysis.detailedFeedback?.weeklyMission || ''}</p>
+          </div>
 
-            <div style="background: #f5f5f5; padding: 10px; border: 2px solid black; margin-bottom: 10px;">
-              <h5 style="font-weight: bold; font-size: 10px; margin: 0 0 5px 0;">현재 상태</h5>
-              <p style="font-size: 10px; margin: 0; opacity: 0.8;">${analysis.detailedFeedback?.currentState || ''}</p>
-            </div>
-
-            <div style="margin-bottom: 10px;">
-              <h5 style="font-weight: bold; font-size: 10px; margin: 0 0 5px 0;">실천 방법</h5>
-              ${(analysis.detailedFeedback?.actionPlan || []).map(action => `
-                <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
-                  <span style="color: #A3E635; font-weight: bold;">+</span>
-                  <span>${action}</span>
-                </div>
-              `).join('')}
-            </div>
-
-            <div style="background: #A3E635; padding: 10px; border: 2px solid black; margin-bottom: 10px;">
-              <h5 style="font-weight: bold; font-size: 10px; margin: 0 0 5px 0;">이번 주 미션</h5>
-              <p style="font-size: 10px; margin: 0;">${analysis.detailedFeedback?.weeklyMission || ''}</p>
-            </div>
-
-            <div style="margin-bottom: 8px;">
-              <span style="font-size: 10px; font-weight: bold;">📚 추천 도서: </span>
+          <!-- Recommendations -->
+          <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+            <div style="flex: 1; background: white; padding: 15px; border: 2px solid black;">
+              <h5 style="font-weight: 900; font-size: 12px; margin: 0 0 10px 0;">📚 추천 도서</h5>
               ${(analysis.detailedFeedback?.recommendedBooks || []).map(book => `
-                <span style="font-size: 9px; background: white; padding: 2px 6px; border: 1px solid black; margin-right: 5px;">${book}</span>
+                <div style="font-size: 11px; padding: 6px 10px; background: #f5f5f5; margin-bottom: 6px; border-left: 3px solid black;">${book}</div>
               `).join('')}
             </div>
-
-            <div style="margin-bottom: 10px;">
-              <span style="font-size: 10px; font-weight: bold;">🎬 추천 영화: </span>
+            <div style="flex: 1; background: white; padding: 15px; border: 2px solid black;">
+              <h5 style="font-weight: 900; font-size: 12px; margin: 0 0 10px 0;">🎬 추천 영화</h5>
               ${(analysis.detailedFeedback?.recommendedMovies || []).map(movie => `
-                <span style="font-size: 9px; background: #00D1FF; padding: 2px 6px; border: 1px solid black; margin-right: 5px;">${movie}</span>
+                <div style="font-size: 11px; padding: 6px 10px; background: #00D1FF; margin-bottom: 6px; border-left: 3px solid black;">${movie}</div>
               `).join('')}
             </div>
+          </div>
 
-            <div style="background: black; color: white; padding: 8px; text-align: center;">
-              <p style="font-size: 10px; font-style: italic; margin: 0;">"${analysis.detailedFeedback?.affirmation || ''}"</p>
+          <!-- Affirmation -->
+          <div style="background: black; color: white; padding: 20px; text-align: center;">
+            <p style="font-size: 10px; font-weight: bold; margin: 0 0 8px 0; opacity: 0.7;">오늘의 확언 (AFFIRMATION)</p>
+            <p style="font-size: 16px; font-style: italic; margin: 0; line-height: 1.5;">"${analysis.detailedFeedback?.affirmation || ''}"</p>
+          </div>
+        </div>
+      `;
+      await renderPageToPDF(factorPageHtml, pdf, false);
+    }
+
+    // Final Page: Growth Plan
+    const growthPlanHtml = `
+      <div style="border: 4px solid black; padding: 25px; background: #FFDE03; min-height: 1040px;">
+        <!-- Page Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 3px solid black;">
+          <div style="font-size: 11px; font-weight: bold; opacity: 0.6;">KRQ-53 회복탄력성 분석</div>
+          <div style="font-size: 11px; font-weight: bold;">${participant.name}님 | ${completedDate}</div>
+        </div>
+
+        <!-- Growth Plan Title -->
+        <div style="background: #00D1FF; border: 4px solid black; padding: 25px; margin-bottom: 25px;">
+          <h3 style="font-weight: 900; font-size: 24px; text-align: center; margin: 0 0 10px 0;">나만의 성장 로드맵</h3>
+          <p style="text-align: center; font-size: 13px; margin: 0; opacity: 0.8;">회복탄력성을 높이기 위한 맞춤형 실천 계획</p>
+        </div>
+
+        <!-- Immediate Actions -->
+        <div style="background: white; padding: 25px; border: 4px solid black; margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+            <span style="background: #FF5C00; color: white; padding: 8px 15px; font-weight: 900; font-size: 14px;">즉시 실천</span>
+            <span style="font-size: 13px; opacity: 0.7;">이번 주 바로 시작하세요</span>
+          </div>
+          ${(result.personalGrowthPlan?.immediate || []).map((item, i) => `
+            <div style="font-size: 14px; display: flex; gap: 12px; margin-bottom: 12px; padding: 15px; background: #FFF5F0; border-left: 4px solid #FF5C00;">
+              <span style="font-weight: 900; color: #FF5C00; font-size: 16px;">${i + 1}</span>
+              <span style="line-height: 1.6;">${item}</span>
             </div>
-          </div>
-        `).join('')}
+          `).join('')}
+        </div>
 
-        <!-- Growth Plan -->
-        <div style="background: #00D1FF; border: 4px solid black; padding: 15px;">
-          <h3 style="font-weight: 900; font-size: 16px; text-align: center; margin: 0 0 15px 0;">나만의 성장 로드맵</h3>
-
-          <div style="background: white; padding: 12px; border: 2px solid black; margin-bottom: 10px;">
-            <h4 style="font-weight: 900; font-size: 12px; margin: 0 0 8px 0;">즉시 실천 (이번 주)</h4>
-            ${(result.personalGrowthPlan?.immediate || []).map((item, i) => `
-              <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
-                <span style="font-weight: bold;">${i + 1}.</span>
-                <span>${item}</span>
-              </div>
-            `).join('')}
+        <!-- Short Term Goals -->
+        <div style="background: white; padding: 25px; border: 4px solid black; margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+            <span style="background: #A3E635; color: black; padding: 8px 15px; font-weight: 900; font-size: 14px;">단기 목표</span>
+            <span style="font-size: 13px; opacity: 0.7;">1개월 내 달성</span>
           </div>
+          ${(result.personalGrowthPlan?.shortTerm || []).map(item => `
+            <div style="font-size: 14px; display: flex; gap: 12px; margin-bottom: 12px; padding: 15px; background: #F5FFE6; border-left: 4px solid #A3E635;">
+              <span style="font-weight: 900; color: #A3E635;">+</span>
+              <span style="line-height: 1.6;">${item}</span>
+            </div>
+          `).join('')}
+        </div>
 
-          <div style="background: white; padding: 12px; border: 2px solid black; margin-bottom: 10px;">
-            <h4 style="font-weight: 900; font-size: 12px; margin: 0 0 8px 0;">단기 목표 (1개월)</h4>
-            ${(result.personalGrowthPlan?.shortTerm || []).map(item => `
-              <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
-                <span style="font-weight: bold;">+</span>
-                <span>${item}</span>
-              </div>
-            `).join('')}
+        <!-- Long Term Goals -->
+        <div style="background: white; padding: 25px; border: 4px solid black; margin-bottom: 25px;">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+            <span style="background: #00D1FF; color: black; padding: 8px 15px; font-weight: 900; font-size: 14px;">장기 목표</span>
+            <span style="font-size: 13px; opacity: 0.7;">3개월 이상</span>
           </div>
+          ${(result.personalGrowthPlan?.longTerm || []).map(item => `
+            <div style="font-size: 14px; display: flex; gap: 12px; margin-bottom: 12px; padding: 15px; background: #E6FAFF; border-left: 4px solid #00D1FF;">
+              <span style="font-weight: 900; color: #00D1FF;">+</span>
+              <span style="line-height: 1.6;">${item}</span>
+            </div>
+          `).join('')}
+        </div>
 
-          <div style="background: white; padding: 12px; border: 2px solid black;">
-            <h4 style="font-weight: 900; font-size: 12px; margin: 0 0 8px 0;">장기 목표 (3개월+)</h4>
-            ${(result.personalGrowthPlan?.longTerm || []).map(item => `
-              <div style="font-size: 10px; display: flex; gap: 5px; margin-bottom: 3px;">
-                <span style="font-weight: bold;">+</span>
-                <span>${item}</span>
-              </div>
-            `).join('')}
-          </div>
+        <!-- Closing Message -->
+        <div style="background: black; color: white; padding: 25px; text-align: center; margin-bottom: 20px;">
+          <p style="font-size: 16px; font-weight: bold; margin: 0 0 10px 0;">회복탄력성은 훈련으로 키울 수 있습니다</p>
+          <p style="font-size: 13px; margin: 0; opacity: 0.8;">작은 변화가 큰 변화를 만듭니다. 오늘 한 걸음부터 시작하세요!</p>
         </div>
 
         <!-- Footer -->
-        <div style="margin-top: 20px; padding: 15px; border: 2px dashed black; text-align: center; font-size: 9px; font-weight: bold; opacity: 0.4;">
-          KRQ-53 심층 분석 엔진 | JJ Creative Resilience Solution | ${new Date().toLocaleDateString()}
+        <div style="padding: 20px; border: 2px dashed black; text-align: center; font-size: 11px; font-weight: bold; opacity: 0.5;">
+          KRQ-53 심층 분석 엔진 | JJ Creative Resilience Solution | ${new Date().toLocaleDateString('ko-KR')}
         </div>
       </div>
     `;
+    await renderPageToPDF(growthPlanHtml, pdf, false);
 
-    // Append to body for rendering
-    document.body.appendChild(tempContainer);
-
-    // Wait for DOM to render
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    try {
-      // Use html2canvas to render
-      const canvas = await html2canvas(tempContainer, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#FFDE03',
-        logging: false,
-        allowTaint: true
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      let heightLeft = pdfHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pdf.internal.pageSize.getHeight();
-
-      while (heightLeft >= 0) {
-        position = heightLeft - pdfHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-        heightLeft -= pdf.internal.pageSize.getHeight();
-      }
-
-      return pdf.output('blob');
-    } finally {
-      // Clean up
-      document.body.removeChild(tempContainer);
-    }
+    return pdf.output('blob');
   };
 
   // Batch PDF download as ZIP
@@ -944,11 +1012,25 @@ const App: React.FC = () => {
     });
   };
 
-  // Generate individual PDF for a participant
+  // Generate individual PDF for a participant (uses generateParticipantPDFBlob for Korean support)
   const handleIndividualPDF = async (participant: Participant) => {
-    setSelectedParticipant(participant);
-    await new Promise(resolve => setTimeout(resolve, 300));
-    await generateAndDownloadPDF(participant);
+    try {
+      setLoading(true);
+      const pdfBlob = await generateParticipantPDFBlob(participant);
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `KRQ_회복탄력성_${participant.name}_${new Date().toLocaleDateString('ko-KR')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('PDF generation error:', e);
+      alert('PDF 생성 중 오류가 발생했습니다.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Render functions
@@ -1177,11 +1259,29 @@ const App: React.FC = () => {
     // 9가지 요인을 낮은 점수순으로 정렬
     const sortedSubCategoryAnalysis = [...result.subCategoryAnalysis].sort((a, b) => a.percentage - b.percentage);
 
-    const radarData = result.subCategoryAnalysis.map(s => ({
-      subject: s.subCategory.replace('능력', '').replace('도', '').replace('성', ''),
-      A: s.score,
-      fullMark: s.maxScore
-    }));
+    // Radar chart with 3 category colors
+    const subCategoryToCategory: Record<SubCategory, Category> = {
+      [SubCategory.EMOTION_CONTROL]: Category.SELF_REGULATION,
+      [SubCategory.IMPULSE_CONTROL]: Category.SELF_REGULATION,
+      [SubCategory.CAUSAL_ANALYSIS]: Category.SELF_REGULATION,
+      [SubCategory.COMMUNICATION]: Category.INTERPERSONAL,
+      [SubCategory.EMPATHY]: Category.INTERPERSONAL,
+      [SubCategory.EGO_EXPANSION]: Category.INTERPERSONAL,
+      [SubCategory.SELF_OPTIMISM]: Category.POSITIVITY,
+      [SubCategory.LIFE_SATISFACTION]: Category.POSITIVITY,
+      [SubCategory.GRATITUDE]: Category.POSITIVITY,
+    };
+
+    const radarData = result.subCategoryAnalysis.map(s => {
+      const cat = subCategoryToCategory[s.subCategory as SubCategory];
+      return {
+        subject: s.subCategory.replace('능력', '').replace('도', '').replace('성', ''),
+        selfRegulation: cat === Category.SELF_REGULATION ? s.score : 0,
+        interpersonal: cat === Category.INTERPERSONAL ? s.score : 0,
+        positivity: cat === Category.POSITIVITY ? s.score : 0,
+        fullMark: s.maxScore
+      };
+    });
 
     return (
       <div className="min-h-screen p-4 pb-40 max-w-4xl mx-auto">
@@ -1219,15 +1319,18 @@ const App: React.FC = () => {
             <p className="text-sm leading-relaxed font-medium">{result.overallInterpretation}</p>
           </Card>
 
-          {/* Radar Chart */}
+          {/* Radar Chart with 3 Category Colors */}
           <Card className="p-0 overflow-hidden border-4 mb-6">
             <div className="bg-black text-white p-3 font-brutal text-center uppercase text-xs">9가지 회복탄력성 요인 분석</div>
-            <div className="h-72 w-full bg-white">
+            <div className="h-80 w-full bg-white">
               <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
+                <RadarChart cx="50%" cy="50%" outerRadius="65%" data={radarData}>
                   <PolarGrid stroke="#ddd" />
                   <PolarAngleAxis dataKey="subject" tick={{ fill: 'black', fontWeight: '700', fontSize: 9 }} />
-                  <Radar name="점수" dataKey="A" stroke="#000" fill="#A3E635" fillOpacity={0.6} />
+                  <Radar name="자기조절능력" dataKey="selfRegulation" stroke="#FF5C00" fill="#FF5C00" fillOpacity={0.5} />
+                  <Radar name="대인관계능력" dataKey="interpersonal" stroke="#00D1FF" fill="#00D1FF" fillOpacity={0.5} />
+                  <Radar name="긍정성" dataKey="positivity" stroke="#A3E635" fill="#A3E635" fillOpacity={0.5} />
+                  <Legend wrapperStyle={{ fontSize: '11px', fontWeight: 'bold', paddingTop: '10px' }} />
                 </RadarChart>
               </ResponsiveContainer>
             </div>
