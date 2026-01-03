@@ -522,12 +522,13 @@ const App: React.FC = () => {
 
     try {
       const canvas = await html2canvas(element, {
-        scale: 2,
+        scale: 1.5, // Reduced from 2 for smaller file size
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#FFDE03'
       });
-      const imgData = canvas.toDataURL('image/png');
+      // Use JPEG with compression instead of PNG for smaller file size
+      const imgData = canvas.toDataURL('image/jpeg', 0.75);
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -535,13 +536,13 @@ const App: React.FC = () => {
       let heightLeft = pdfHeight;
       let position = 0;
 
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
       heightLeft -= pdf.internal.pageSize.getHeight();
 
       while (heightLeft >= 0) {
         position = heightLeft - pdfHeight;
         pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
         heightLeft -= pdf.internal.pageSize.getHeight();
       }
 
@@ -600,21 +601,22 @@ const App: React.FC = () => {
 
       try {
         const canvas = await html2canvas(tempContainer, {
-          scale: 2,
+          scale: 1.5, // Reduced from 2 for smaller file size
           useCORS: true,
           backgroundColor: '#FFDE03',
           logging: false,
           allowTaint: true
         });
 
-        const imgData = canvas.toDataURL('image/png');
+        // Use JPEG with compression instead of PNG for smaller file size
+        const imgData = canvas.toDataURL('image/jpeg', 0.75);
         const pdfWidth = pdf.internal.pageSize.getWidth();
         const pdfHeight = pdf.internal.pageSize.getHeight();
 
         if (!isFirstPage) {
           pdf.addPage();
         }
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       } finally {
         document.body.removeChild(tempContainer);
       }
