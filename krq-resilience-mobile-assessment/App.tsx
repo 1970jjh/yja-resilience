@@ -1186,8 +1186,8 @@ const App: React.FC = () => {
           </h2>
           <div className="grid grid-cols-1 gap-3">
             {[
-              { val: 5, text: "매우 그러하다" },
-              { val: 4, text: "그러하다" },
+              { val: 5, text: "매우 그렇다" },
+              { val: 4, text: "그렇다" },
               { val: 3, text: "보통이다" },
               { val: 2, text: "그렇지 않다" },
               { val: 1, text: "전혀 그렇지 않다" }
